@@ -1,3 +1,6 @@
+#ifndef OPCODES_H
+#define OPCODES_H
+
 #include <stddef.h>
 #define REG_COUNT 256
 typedef enum {
@@ -23,16 +26,28 @@ typedef struct {
     Opcode op;
 } InstrInfo;
 
-
+#define REG_SIZE 1
+#define OPCODE_SIZE 1
+#define INT_SIZE 4
+#define FLOAT_SIZE 8
 static InstrInfo instructions[] = {
+    {"nop",    "",    OP_NOP},
     {"halt",   "",    OP_HALT},
+    // `load` emits OP_LOADI or OP_LOADF depending on the literal type.
     {"load",   "rn",  OP_LOADI},
-    {"cmp_lt", "rrr", OP_CMP_LT},
-    {"jz",     "ri",  OP_JMP_IF_NOT},
+    {"mov",    "rr",  OP_MOV},
     {"add",    "rrr", OP_ADD},
-    {"jmp",    "i",   OP_JMP},
+    {"sub",    "rrr", OP_SUB},
+    {"mul",    "rrr", OP_MUL},
+    {"div",    "rrr", OP_DIV},
+    {"cmp_lt", "rrr", OP_CMP_LT},
+    {"jmp",    "l",   OP_JMP},
+    {"jnz",    "rl",  OP_JMP_IF},
+    {"jz",     "rl",  OP_JMP_IF_NOT},
     {"print",  "r",   OP_PRINT},
 };
 
 static const size_t instructions_count
     = sizeof(instructions) / sizeof(instructions[0]);
+
+#endif // OPCODES_H

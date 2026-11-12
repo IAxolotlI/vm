@@ -21,8 +21,25 @@ static inline String_View sv_from_parts(const char *data, size_t count) {
     return sv;
 }
 
+static inline size_t sv_find(String_View sv, char ch) {
+    for (size_t i = 0; i < sv.count; i++) {
+        if (sv.data[i] == ch) return i;
+    }
+    return sv.count;
+}
+
 static inline String_View sv_from_cstr(const char *s) {
     return sv_from_parts(s, strlen(s));
+}
+
+static inline void sv_shift_by_n(String_View *sv, size_t n) {
+    if (n > sv->count) {
+        sv->data += sv->count;
+        sv->count = 0;
+        return;
+    }
+    sv->data += n;
+    sv->count -= n;
 }
 
 static inline bool char_in_string(char c, const char* delim) {

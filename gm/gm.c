@@ -1,5 +1,6 @@
 #include "logger.h"
 #include "gm.h"
+#include "opcodes.h"
 #include <stdbool.h>
 #include <stdio.h>
 #include <errno.h>
@@ -308,7 +309,7 @@ uint8_t *load_program_from_file(Vm *vm, const char *input_file_path) {
     
     uint8_t *code = malloc((size_t)size);
     if (!code) {
-        LOG_ERROR("Code alloc failed");
+        LOG_ERROR("Malloc failed");
         fclose(input_file);
         return NULL;
     }

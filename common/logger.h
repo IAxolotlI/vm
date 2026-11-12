@@ -1,20 +1,28 @@
 #ifndef LOGGER_H_
 #define LOGGER_H_
 
-#define COLOR_ERROR   "\033[38;5;160m"
-#define COLOR_BUG     "\033[38;5;204m"
-#define COLOR_WARNING "\033[38;5;3m"
-#define COLOR_INFO    "\033[38;5;12m"
-#define COLOR_RESET   "\033[0m"
+typedef struct {
+  const char *file;
+  int line;
+  int col;
+} SrcLocation;
 
+#define PRINT_ERROR(loc, fmt, ...) \
+    fprintf(stderr, "%s:%d:%d: [ERROR]: " fmt "\n", (loc).file, (loc).line, (loc).col, ##__VA_ARGS__)
+#define PRINT_BUG(loc, fmt, ...) \
+    fprintf(stderr, "%s:%d:%d: [BUG]: " fmt "\n", (loc).file, (loc).line, (loc).col, ##__VA_ARGS__)
+#define PRINT_INFO(loc, fmt, ...) \
+    fprintf(stderr, "%s:%d:%d: [INFO]: " fmt "\n", (loc).file, (loc).line, (loc).col, ##__VA_ARGS__)
+#define PRINT_WARNING(loc, fmt, ...) \
+    fprintf(stderr, "%s:%d:%d: [WARNING]: " fmt "\n", (loc).file, (loc).line, (loc).col, ##__VA_ARGS__)
 #define LOG_ERROR(fmt, ...) \
-    fprintf(stderr, "%s[ERROR]: " fmt "%s\n", COLOR_ERROR, ##__VA_ARGS__, COLOR_RESET)
+    fprintf(stderr, "%s:%d: [ERROR]: " fmt "\n", __FILE__, __LINE__, ##__VA_ARGS__)
 #define LOG_BUG(fmt, ...) \
-    fprintf(stderr, "%s[BUG]: " fmt "%s\n", COLOR_BUG, ##__VA_ARGS__, COLOR_RESET)
+    fprintf(stderr, "%s:%d: [BUG]: " fmt "\n", __FILE__, __LINE__, ##__VA_ARGS__)
 #define LOG_INFO(fmt, ...) \
-    fprintf(stderr, "%s[INFO]: " fmt "%s\n", COLOR_INFO, ##__VA_ARGS__, COLOR_RESET)
+    fprintf(stderr, "%s:%d: [INFO]: " fmt "\n", __FILE__, __LINE__, ##__VA_ARGS__)
 #define LOG_WARNING(fmt, ...) \
-    fprintf(stderr, "%s[WARNING]: " fmt "%s\n", COLOR_WARNING, ##__VA_ARGS__, COLOR_RESET)
+    fprintf(stderr, "%s:%d: [WARNING]: " fmt "\n", __FILE__, __LINE__, ##__VA_ARGS__)
 
 
 #endif

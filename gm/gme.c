@@ -3,7 +3,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <errno.h>
 #include <assert.h>
 #include "logger.h"
 
@@ -41,7 +40,6 @@ int main(int argc, char **argv) {
     uint8_t *code = load_program_from_file(&vm, input_file_path);
     if (!code) return 1;
     int result = execute_program(&vm);
-    
     free(code);
     return result;
 }

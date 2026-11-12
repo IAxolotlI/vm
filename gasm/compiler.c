@@ -1,21 +1,96 @@
+#include <assert.h>
+#include <ctype.h>
+#include <errno.h>
+#include <inttypes.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <errno.h>
-#include <stdbool.h>
 #include <string.h>
-#include <ctype.h>
-#include <assert.h>
-#include <stddef.h>
-#include <inttypes.h>
 
 #include "container.h"
 #include "compiler.h"
+#include "emit.h"
+#include "logger.h"
+#include "opcodes.h"
 #include "sv.h"
+
+#define LABEL_MARK ':'
+
+typedef struct {
+    char *name;
+    size_t addr;
+} Label;
+
+typedef struct {
+    Label *items;
+    size_t count;
+    size_t capacity;
+} LabelTable;
+
+typedef struct {
+    const char *filename;
+    LabelTable labels;
+} Compiler;
+
+typedef struct {
+    bool has_label;
+    String_View label;
+    size_t label_col;
+    bool has_instr;
+    Instr instr;
+} ParsedLine;
+
+static ParseError parse_error(ParseStatus status, size_t col) {
+    return (ParseError){.status = status, .err_col = col};
+}
+
+static const InstrInfo *find_instruction(String_View name) {
+    for (size_t i = 0; i < instructions_count; i++) {
+        if (sv_eq_cstr(name, instructions[i].name)) {
+            return &instructions[i];
+        }
+    }
+    return NULL;
+}
+
+static bool label_lookup(const LabelTable *table, String_View name, size_t *addr) {
+    for (size_t i = 0; i < table->count; i++) {
+        if (!sv_eq_cstr(name, table->items[i].name)) continue;
+        if (addr) *addr = table->items[i].addr;
+        return true;
+    }
+    return false;
+}
+
+static bool label_define(LabelTable *table, String_View name, size_t addr) {
+    if (label_lookup(table, name, NULL)) return false;
+
+    char *copy = strndup(name.data, name.count);
+    if (!copy) {
+        LOG_ERROR("Malloc failed");
+        exit(EXIT_FAILURE);
+    }
+
+    Label label = {.name = copy, .addr = addr};
+    da_append(table, label);
+    return true;
+}
+
+static void label_table_free(LabelTable *table) {
+    if (table) {
+        for (size_t i = 0; i < table->count; i++) {
+            free(table->items[i].name);
+        }
+        free(table->items);
+        *table = (LabelTable){0};
+    }
+}
 
 static ParseStatus sv_is_register(String_View sv, uint8_t *num) {
     if (sv.count < 2 || (sv.data[0] != 'r' && sv.data[0] != 'R')) {
         return PARSE_NOT_REG;
     }
+
     long value = 0;
     for (size_t i = 1; i < sv.count; i++) {
         unsigned char c = (unsigned char)sv.data[i];
@@ -24,403 +99,374 @@ static ParseStatus sv_is_register(String_View sv, uint8_t *num) {
         if (value >= REG_COUNT) return PARSE_BIG_REG;
     }
 
-    *num = value;
+    *num = (uint8_t)value;
     return PARSE_OK;
 }
 
-
 static ParseStatus sv_to_double(String_View sv, double *out) {
-    char *endptr, *str = strndup(sv.data, sv.count);
+    char *endptr;
+    char *str = strndup(sv.data, sv.count);
+    assert(str != NULL && "Out of RAM");
+
     errno = 0;
-    double v = strtod(str, &endptr);
-    if (errno != ERANGE && endptr != str && *endptr == '\0') {
-        *out = v;
-        return PARSE_OK;
-    }
+    double value = strtod(str, &endptr);
+    bool ok = errno != ERANGE && endptr != str && *endptr == '\0';
+    if (ok) *out = value;
+
     free(str);
-    return PARSE_NAN;
+    return ok ? PARSE_OK : PARSE_NAN;
 }
 
 static ParseStatus sv_to_int(String_View sv, int64_t *out) {
-    char *endptr, *str = strndup(sv.data, sv.count);
+    char *endptr;
+    char *str = strndup(sv.data, sv.count);
+    assert(str != NULL && "Out of RAM");
+
     errno = 0;
-    long long val = strtoll(str, &endptr, 10);
-    if (errno != ERANGE && endptr != str && *endptr == '\0') {
-        *out = val;
-        return PARSE_OK;
-    }
+    long long value = strtoll(str, &endptr, 10);
+    bool ok = errno != ERANGE && endptr != str && *endptr == '\0';
+    if (ok) *out = value;
+
     free(str);
-    return PARSE_NAN;
+    return ok ? PARSE_OK : PARSE_NAN;
 }
 
-
-static bool get_opcode(String_View text, Opcode *out) {
-    for (size_t i = 0; i < instructions_count; i++) {
-        if (sv_eq_cstr(text, instructions[i].name)) {
-            *out = instructions[i].op;
-            return true;
-        }
-    }
-    return false;
-}
-
-static bool parse_command(String_View text, String_View *out) {
-    for (size_t i = 0; i < instructions_count; i++) {
-        if (sv_eq_cstr(text, instructions[i].name)) {
-            *out = sv_from_cstr(instructions[i].sig);
-            return true;
-        }
-    }
-    return false;
-}
-
-static ParseStatus parse_operand(String_View text, char sig, Operand_Arr *arr_out) {
-    Operand out;
-    switch(sig) {
+static ParseStatus parse_operand(String_View text, char sig, size_t col, Instr *ins) {
+    Operand operand = {.col = col};
+    switch (sig) {
         case 'r': {
             uint8_t reg;
-            ParseStatus err = sv_is_register(text, &reg);
-            if (err != PARSE_OK) return err;
-            out.kind = OPERAND_REG;
-            out.as.reg = reg;
-            da_append(arr_out, out);
-            return PARSE_OK;
+            ParseStatus status = sv_is_register(text, &reg);
+            if (status != PARSE_OK) return status;
+            operand.kind = OPERAND_REG;
+            operand.as.reg = reg;
+            break;
         }
+
         case 'i': {
             int64_t value;
-            ParseStatus err = sv_to_int(text, &value);
-            if (err != PARSE_OK) return err;
-            out.kind = OPERAND_INT;
-            out.as.i = value;
-            da_append(arr_out, out);
-            return PARSE_OK;
+            ParseStatus status = sv_to_int(text, &value);
+            if (status != PARSE_OK) return status;
+            operand.kind = OPERAND_INT;
+            operand.as.i = value;
+            break;
         }
+
+        case 'l': {
+            int64_t value;
+            if (sv_to_int(text, &value) == PARSE_OK) {
+                operand.kind = OPERAND_INT;
+                operand.as.i = value;
+            } else {
+                operand.kind = OPERAND_LABEL;
+                operand.as.label = text;
+            }
+            break;
+        }
+
         case 'f': {
             double value;
-            ParseStatus err = sv_to_double(text, &value);
-            if (err != PARSE_OK) return err;
-            out.kind = OPERAND_FLOAT;
-            out.as.f = value;
-            da_append(arr_out, out);
-            return PARSE_OK;
+            ParseStatus status = sv_to_double(text, &value);
+            if (status != PARSE_OK) return status;
+            operand.kind = OPERAND_FLOAT;
+            operand.as.f = value;
+            break;
         }
+
         case 'n': {
-            int64_t value;
-            ParseStatus err = sv_to_int(text, &value);
-            if (err == PARSE_OK) {
-                out.kind = OPERAND_INT;
-                out.as.i = value;
-                da_append(arr_out, out);
-                return PARSE_OK;
+            int64_t int_value;
+            if (sv_to_int(text, &int_value) == PARSE_OK) {
+                operand.kind = OPERAND_INT;
+                operand.as.i = int_value;
+                break;
             }
-            double v;
-            err = sv_to_double(text, &v);
-            if (err != PARSE_OK) return err;
-            out.kind = OPERAND_FLOAT;
-            out.as.f = v;
-            da_append(arr_out, out);
-            return PARSE_OK;
+
+            double float_value;
+            ParseStatus status = sv_to_double(text, &float_value);
+            if (status != PARSE_OK) return status;
+            operand.kind = OPERAND_FLOAT;
+            operand.as.f = float_value;
+            break;
         }
-        default: return PARSE_BAD_SIG;
+
+        default:
+            return PARSE_BAD_SIG;
     }
+
+    da_append(ins, operand);
+    return PARSE_OK;
 }
 
-static ParseError parse_line(const char *text, Instr *ins) {
-    String_View sv = sv_from_cstr(text);
-    sv_trim_right(&sv);
-    sv_trim_left(&sv);
+static ParseError parse_arguments(String_View text, const char *line,
+                                  Instr *ins) {
+    size_t sig_len = strlen(ins->info->sig);
+    size_t arg_idx = 0;
+    bool after_comma = false;
+    size_t comma_col = 1;
 
-    if (sv.count == 0) {
-        return (ParseError){.status = PARSE_EMPTY_LINE, .err_col = 1};
-    }
+    while (true) {
+        sv_trim_left(&text);
+        if (text.count == 0) {
+            if (after_comma) {
+                return parse_error(PARSE_TRAILING_COMMA, comma_col);
+            }
+            break;
+        }
 
-    size_t i = 0;
-    while (i < sv.count && !isspace((unsigned char)sv.data[i])) i++;
-
-    ins->command = sv_from_parts(sv.data, i);
-    size_t cmd_col = (size_t)(ins->command.data - text + 1);
-
-    sv.data  += i;
-    sv.count -= i;
-    sv_trim_left(&sv);
-
-    while (sv.count > 0) {
-        sv_trim_left(&sv);
-        size_t n = 0;
-        while (n < sv.count && sv.data[n] != ',') n++;
-
-        String_View arg = sv_from_parts(sv.data, n);
+        size_t comma = sv_find(text, ',');
+        String_View arg = sv_from_parts(text.data, comma);
         sv_trim_right(&arg);
+        size_t arg_col = (size_t)(arg.data - line) + 1;
 
         if (arg.count == 0) {
-            ParseError err = {.err_col = (size_t)(arg.data - text + 1)};
-            if (n == sv.count) err.status = PARSE_TRAILING_COMMA;
-            else               err.status = PARSE_EMPTY_ARG;
-            return err;
+            ParseStatus status = (comma < text.count)
+                ? PARSE_EMPTY_ARG
+                : PARSE_TRAILING_COMMA;
+            return parse_error(status, arg_col);
         }
 
-        for (size_t k = 0; k < arg.count; k++) {
-            if (isspace((unsigned char)arg.data[k])) {
-                return (ParseError) {
-                    .status = PARSE_MISSING_COMMA,
-                    .err_col = ((size_t)(arg.data - text) + k + 1)
-                };
+        for (size_t i = 0; i < arg.count; i++) {
+            if (isspace((unsigned char)arg.data[i])) {
+                size_t col = (size_t)(arg.data - line) + i + 1;
+                return parse_error(PARSE_MISSING_COMMA, col);
             }
         }
-        da_append(ins, arg);
-        bool has_comma = (n < sv.count);
-        sv.data  += n;
-        sv.count -= n;
+
+        if (arg_idx >= sig_len) {
+            return parse_error(PARSE_MANY_ARGUMENTS, arg_col);
+        }
+
+        ParseStatus status = parse_operand(arg, ins->info->sig[arg_idx],
+                arg_col, ins);
+        if (status != PARSE_OK) return parse_error(status, arg_col);
+
+        arg_idx++;
+        after_comma = false;
+
+        bool has_comma = comma < text.count;
         if (!has_comma) break;
-        sv.data++;
-        sv.count--;
+
+        comma_col = (size_t)(text.data - line) + comma + 1;
+        sv_shift_by_n(&text, comma + 1);
+        after_comma = true;
     }
 
-    String_View sig;
-    if (!parse_command(ins->command, &sig)) {
-        return (ParseError) {
-            .status  = PARSE_UNKNOWN_OP,
-            .err_col = cmd_col,
-        };
+    if (arg_idx < sig_len) {
+        return parse_error(PARSE_FEW_ARGUMENTS, ins->col);
     }
-    if (ins->count != sig.count) {
-        ParseError err = {.err_col = cmd_col};
-        if (ins->count < sig.count) err.status = PARSE_FEW_ARGUMENTS;
-        else                        err.status = PARSE_MANY_ARGUMENTS;
-        return err;
+    return parse_error(PARSE_OK, 1);
+}
+
+static ParseError parse_instruction(String_View text, const char *line,
+                                    Instr *ins) {
+    size_t name_len = 0;
+    while (name_len < text.count && !isspace((unsigned char)text.data[name_len])) {
+        name_len++;
     }
-    
-    for (size_t k = 0; k < ins->count; k++) {
-        ParseStatus err = parse_operand(ins->items[k], sig.data[k], &ins->args);
-        if (err != PARSE_OK) {
-            return (ParseError){
-                .status  = err,
-                .err_col = (size_t)(ins->items[k].data - text + 1),
-            };
+
+    String_View name = sv_from_parts(text.data, name_len);
+    ins->info = find_instruction(name);
+    if (!ins->info) {
+        return parse_error(PARSE_UNKNOWN_OP, (size_t)(name.data - line) + 1);
+    }
+
+    ins->col = (size_t)(name.data - line) + 1;
+    sv_shift_by_n(&text, name_len);
+    return parse_arguments(text, line, ins);
+}
+
+static ParseError parse_line(const char *text, ParsedLine *out) {
+    String_View rest = sv_from_cstr(text);
+    sv_trim(&rest);
+    if (rest.count == 0) return parse_error(PARSE_OK, 1);
+
+    size_t colon = sv_find(rest, LABEL_MARK);
+    if (colon < rest.count) {
+        String_View label = sv_from_parts(rest.data, colon);
+        sv_trim_right(&label);
+
+        bool is_label = true;
+        for (size_t i = 0; i < label.count; i++) {
+            if (isspace((unsigned char)label.data[i])) {
+                is_label = false;
+                break;
+            }
+        }
+
+        if (is_label) {
+            if (label.count == 0) {
+                return parse_error(PARSE_BAD_LABEL, (size_t)(rest.data - text) + 1);
+            }
+
+            out->has_label = true;
+            out->label = label;
+            out->label_col = (size_t)(label.data - text) + 1;
+
+            sv_shift_by_n(&rest, colon + 1);
+            sv_trim(&rest);
+            if (rest.count == 0) return parse_error(PARSE_OK, 1);
         }
     }
 
-    return (ParseError){.status = PARSE_OK, .err_col = 0};
+    out->has_instr = true;
+    return parse_instruction(rest, text, &out->instr);
 }
 
-int error_message(ParseError err, size_t err_line, const char* filename) {
-    printf("%s:%zu:%zu: ", filename, err_line, err.err_col);
-    switch (err.status) {
-    case PARSE_OK: return 0;
-    case PARSE_EMPTY_LINE: return 0;
-    case PARSE_EMPTY_ARG: {
-        printf("Error: Empty or missed argument\n");
-        return 1;
+static size_t operand_size(OperandKind kind) {
+    switch (kind) {
+        case OPERAND_REG: return REG_SIZE;
+        case OPERAND_INT: return INT_SIZE;
+        case OPERAND_FLOAT: return FLOAT_SIZE;
+        case OPERAND_LABEL: return INT_SIZE;
     }
-    case PARSE_TRAILING_COMMA: {
-        printf("Error: Trailing comma\n");
-        return 1;
+    return 0;
+}
+
+static size_t instruction_size(const Instr *ins) {
+    size_t size = OPCODE_SIZE;
+    for (size_t i = 0; i < ins->count; i++) {
+        size += operand_size(ins->items[i].kind);
     }
-    case PARSE_MISSING_COMMA: {
-        printf("Error: Missing comma between arguments\n");
-        return 1;
+    return size;
+}
+
+static ParseError resolve_labels(Instr *ins, const LabelTable *labels, size_t addr) {
+    size_t next_addr = addr + instruction_size(ins);
+    for (size_t i = 0; i < ins->count; i++) {
+        Operand *operand = &ins->items[i];
+        if (operand->kind != OPERAND_LABEL) continue;
+
+        size_t label_addr;
+        if (!label_lookup(labels, operand->as.label, &label_addr)) {
+            return parse_error(PARSE_MISSING_LABEL, operand->col);
+        }
+
+        operand->kind = OPERAND_INT;
+        operand->as.i = (int64_t)label_addr - (int64_t)next_addr;
     }
-    case PARSE_UNKNOWN_OP: {
-        printf("Error: Unknown command\n");
-        return 1;
+
+    return parse_error(PARSE_OK, 1);
+}
+
+static void instr_free(Instr *ins) {
+    free(ins->items);
+    *ins = (Instr){0};
+}
+
+static const char *parse_status_message(ParseStatus status) {
+    switch (status) {
+        case PARSE_OK:               return NULL;
+        case PARSE_EMPTY_ARG:        return "Empty or missed argument";
+        case PARSE_TRAILING_COMMA:   return "Trailing comma";
+        case PARSE_MISSING_COMMA:    return "Missing comma between arguments";
+        case PARSE_UNKNOWN_OP:       return "Unknown command";
+        case PARSE_MANY_ARGUMENTS:   return "Too many arguments";
+        case PARSE_FEW_ARGUMENTS:    return "Too few arguments";
+        case PARSE_BAD_SIG:          return "Bad signature";
+        case PARSE_NOT_REG:          return "Expected register in argument";
+        case PARSE_BIG_REG:          return "Register doesn't exist";
+        case PARSE_NAN:              return "Expected number or label in argument";
+        case PARSE_ERROR_EMIT:       return "Error occurred during emission";
+        case PARSE_LABEL_REDEF:      return "Label redefined";
+        case PARSE_MISSING_LABEL:    return "Label doesn't exist";
+        case PARSE_BAD_LABEL:        return "Invalid label";
     }
-    case PARSE_MANY_ARGUMENTS: {
-        printf("Error: Too many arguments\n");
-        return 1;
-    }
-    case PARSE_FEW_ARGUMENTS: {
-        printf("Error: Too few arguments\n");
-        return 1;
-    }
-    case PARSE_BAD_SIG: {
-        printf("ASM Error: Bad signature\n");
-        return 1;
-    }
-    case PARSE_NOT_REG: {
-        printf("Error: Expected register in argument\n");
-        return 1;
-    }
-    case PARSE_BIG_REG: {
-        printf("Error: Register doesn't exist\n");
-        return 1;
-    }
-    case PARSE_NAN: {
-        printf("Error: Expected number in argument\n");
-        return 1;
-    }
-    }
+    return "Unknown parse error";
+}
+
+static int report_error(ParseError err, size_t line, const char *filename) {
+    if (err.status == PARSE_OK) return 0;
+
+    const char *message = parse_status_message(err.status);
+    SrcLocation loc = {
+        .file = filename,
+        .line = (int)line,
+        .col = (int)err.err_col,
+    };
+    PRINT_ERROR(loc, "%s", message);
     return 1;
 }
 
-static bool write_u8(FILE *out, uint8_t value) {
-    return fputc(value, out) != EOF;
+static int check_read_error(const Compiler *compiler, FILE *input_file) {
+    if (!ferror(input_file)) return 0;
+
+    LOG_ERROR("Couldn't read file `%s`: %s", compiler->filename, strerror(errno));
+    return 1;
 }
 
-static bool write_u32(FILE *out, uint32_t value) {
-    uint8_t bytes[4] = {
-        (uint8_t)(value),
-        (uint8_t)(value >> 8),
-        (uint8_t)(value >> 16),
-        (uint8_t)(value >> 24),
-    };
-    return fwrite(bytes, 1, sizeof(bytes), out) == sizeof(bytes);
-}
-
-static bool write_u64(FILE *out, uint64_t value) {
-    uint8_t bytes[8];
-    for (size_t i = 0; i < sizeof(bytes); i++) {
-        bytes[i] = (uint8_t)(value >> (8 * i));
-    }
-    return fwrite(bytes, 1, sizeof(bytes), out) == sizeof(bytes);
-}
-
-static bool emit_load(FILE *out, const Instr *ins) {
-    if (ins->args.count != 2) return false;
-    Operand dst = ins->args.items[0];
-    Operand src = ins->args.items[1];
-    if (dst.kind != OPERAND_REG) return false;
-    if (src.kind == OPERAND_INT) {
-        if (src.as.i < INT32_MIN || src.as.i > INT32_MAX) return false;
-        return write_u8(out, (uint8_t)OP_LOADI)
-            && write_u8(out, dst.as.reg)
-            && write_u32(out, (uint32_t)(int32_t)src.as.i);
-    }
-    if (src.kind == OPERAND_FLOAT) {
-        uint64_t bits;
-        memcpy(&bits, &src.as.f, sizeof bits);
-        return write_u8(out, OP_LOADF)
-            && write_u8(out, dst.as.reg)
-            && write_u64(out, bits);
-    }
-    return false;
-}
-
-static bool emit_rrr(FILE *out, Opcode op, const Instr *ins) {
-    if (ins->args.count != 3) return false;
-    Operand dst = ins->args.items[0];
-    Operand a   = ins->args.items[1];
-    Operand b   = ins->args.items[2];
-    if (dst.kind != OPERAND_REG
-        || a.kind != OPERAND_REG
-        || b.kind != OPERAND_REG) {
-        return false;
-    }
-    return write_u8(out, (uint8_t)op)
-        && write_u8(out, dst.as.reg)
-        && write_u8(out, a.as.reg)
-        && write_u8(out, b.as.reg);
-}
-
-static bool emit_jmp(FILE *out, const Instr *ins) {
-    if (ins->args.count != 1) return false;
-    Operand off = ins->args.items[0];
-    if (off.kind != OPERAND_INT) return false;
-    if (off.as.i < INT32_MIN || off.as.i > INT32_MAX) return false;
-    return write_u8(out, OP_JMP)
-        && write_u32(out, (uint32_t)(int32_t)off.as.i);
-}
-
-static bool emit_jmp_if(FILE *out, Opcode op, const Instr *ins) {
-    if (ins->args.count != 2) return false;
-    Operand reg = ins->args.items[0];
-    Operand off = ins->args.items[1];
-    if (reg.kind != OPERAND_REG || off.kind != OPERAND_INT) return false;
-    if (off.as.i < INT32_MIN || off.as.i > INT32_MAX) return false;
-    return write_u8(out, (uint8_t)op)
-        && write_u8(out, reg.as.reg)
-        && write_u32(out, (uint32_t)(int32_t)off.as.i);
-}
-
-static bool emit_mov(FILE *out, const Instr *ins) {
-    if (ins->args.count != 2) return false;
-
-    Operand dst = ins->args.items[0];
-    Operand src = ins->args.items[1];
-
-    if (dst.kind != OPERAND_REG || src.kind != OPERAND_REG) return false;
-
-    return write_u8(out, OP_MOV)
-        && write_u8(out, dst.as.reg)
-        && write_u8(out, src.as.reg);
-}
-
-static bool emit_print(FILE *out, const Instr *ins) {
-    if (ins->args.count != 1) return false;
-
-    Operand src = ins->args.items[0];
-
-    if (src.kind != OPERAND_REG) return false;
-
-    return write_u8(out, OP_PRINT)
-        && write_u8(out, src.as.reg);
-}
-
-static bool emit_instr(FILE *out, const Instr *ins) {
-    Opcode op;
-    if (!get_opcode(ins->command, &op)) return false;
-    switch (op) {
-        case OP_NOP:
-        case OP_HALT:
-            return write_u8(out, (uint8_t)OP_HALT);
-
-        case OP_LOADI:
-        case OP_LOADF:
-            return emit_load(out, ins);
-
-        case OP_ADD:    return emit_rrr(out, (uint8_t)OP_ADD, ins);
-        case OP_SUB:    return emit_rrr(out, (uint8_t)OP_SUB, ins);
-        case OP_MUL:    return emit_rrr(out, (uint8_t)OP_MUL, ins);
-        case OP_DIV:    return emit_rrr(out, (uint8_t)OP_DIV, ins);
-        case OP_CMP_LT: return emit_rrr(out, (uint8_t)OP_CMP_LT, ins);
-
-        case OP_JMP:
-            return emit_jmp(out, ins);
-
-        case OP_JMP_IF:
-            return emit_jmp_if(out, (uint8_t)OP_JMP_IF, ins);
-        case OP_JMP_IF_NOT:
-            return emit_jmp_if(out, (uint8_t)OP_JMP_IF_NOT, ins);
-
-        case OP_MOV:
-            return emit_mov(out, ins);
-        case OP_PRINT:
-            return emit_print(out, ins);
-    }
-    
-   return false;
-}
-
-int emit_bytecode_from_program(const char* filename, FILE* input_file, FILE* output_file) {
+static int collect_labels(Compiler *compiler, FILE *input_file) {
+    int result = 0;
     char *line = NULL;
-    size_t len = 0;
-    ssize_t read;
+    size_t line_capacity = 0;
     size_t lineno = 0;
-    while ((read = getline(&line, &len, input_file)) != -1) {
+    size_t pc = 0;
+
+    while (getline(&line, &line_capacity, input_file) != -1) {
         lineno++;
-        Instr ins = {0};
-        ParseError err = parse_line(line, &ins);
-        if (err.status == PARSE_EMPTY_LINE) {
-            free(ins.items);
-            free(ins.args.items);
-            continue;
-        }
-        else if (err.status != PARSE_OK) {
-            free(ins.items);
-            free(ins.args.items);
-            return error_message(err, lineno, filename);
-        }
-        if (!emit_instr(output_file, &ins)) {
-            printf("%s:%zu: Error: Cannot emit instruction\n",
-                filename, lineno);
-            free(ins.items);
-            free(ins.args.items);
-            return 1;
+        ParsedLine parsed = {0};
+        ParseError err = parse_line(line, &parsed);
+
+        if (err.status == PARSE_OK && parsed.has_label && !label_define(&compiler->labels, parsed.label, pc)) {
+            err = parse_error(PARSE_LABEL_REDEF, parsed.label_col);
         }
 
-        free(ins.items);
-        free(ins.args.items);
+        if (err.status == PARSE_OK && parsed.has_instr) {
+            pc += instruction_size(&parsed.instr);
+        }
+        instr_free(&parsed.instr);
+        if (err.status != PARSE_OK) {
+            result = report_error(err, lineno, compiler->filename);
+            break;
+        }
     }
 
+    if (result == 0) result = check_read_error(compiler, input_file);
     free(line);
-    return 0;
+    return result;
+}
+
+static int emit_instructions(Compiler *compiler, FILE *input_file, FILE *output_file) {
+    int result = 0;
+    char *line = NULL;
+    size_t line_capacity = 0;
+    size_t lineno = 0;
+    size_t pc = 0;
+
+    while (getline(&line, &line_capacity, input_file) != -1) {
+        lineno++;
+        ParsedLine parsed = {0};
+        ParseError err = parse_line(line, &parsed);
+
+        if (err.status == PARSE_OK && parsed.has_instr) {
+            err = resolve_labels(&parsed.instr, &compiler->labels, pc);
+            if (err.status == PARSE_OK && !emit_instr(output_file, &parsed.instr)) {
+                err = parse_error(PARSE_ERROR_EMIT, parsed.instr.col);
+            }
+            if (err.status == PARSE_OK) {
+                pc += instruction_size(&parsed.instr);
+            }
+        }
+        instr_free(&parsed.instr);
+        if (err.status != PARSE_OK) {
+            result = report_error(err, lineno, compiler->filename);
+            break;
+        }
+    }
+
+    if (result == 0) result = check_read_error(compiler, input_file);
+    free(line);
+    return result;
+}
+
+int emit_bytecode_from_program(const char *filename, FILE *input_file, FILE *output_file) {
+    Compiler compiler = {.filename = filename};
+
+    int result = collect_labels(&compiler, input_file);
+    if (result == 0) {
+        rewind(input_file);
+        result = emit_instructions(&compiler, input_file, output_file);
+    }
+
+    label_table_free(&compiler.labels);
+    return result;
 }

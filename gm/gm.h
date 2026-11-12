@@ -1,3 +1,6 @@
+#ifndef GM_H
+#define GM_H
+
 #include <stddef.h>
 #include <stdint.h>
 #include "opcodes.h"
@@ -40,3 +43,5 @@ void vm_execute_step(Vm *vm);
 void print_value(Value v);
 uint8_t *load_program_from_file(Vm *vm, const char *input_file_path);
 int execute_program(Vm *vm);
+
+#endif // GM_H

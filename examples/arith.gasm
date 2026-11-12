@@ -1,0 +1,19 @@
+    nop
+    load r0, 7
+    load r1, 3
+    load r2, 1.5
+
+    mov r3, r0
+    add r4, r3, r1
+    sub r5, r3, r1
+    mul r6, r4, r1
+    div r7, r6, r1
+
+    print r4
+    print r5
+    print r6
+    print r7
+
+    add r8, r2, r2
+    print r8
+    halt
