@@ -1,13 +1,15 @@
-    load r0, 0
-    load r1, 1
-    load r2, 11
-    load r3, 1
+    load_i r0, 0
+    load_i r1, 1
+    load_i r2, 11
+    load_i r3, 1
+
 loop:
-    cmp_lt r4, r1, r2
+    cmp_lt_i r4, r1, r2
     jz r4, end
-    add r0, r0, r1
-    add r1, r1, r3
+    add_i r0, r0, r1
+    add_i r1, r1, r3
     jmp loop
+
 end:
-    print r0
+    print_i r0
     halt

@@ -1,19 +1,40 @@
     nop
-    load r0, 7
-    load r1, 3
-    load r2, 1.5
+
+    load_i r0, 7
+    load_i r1, 3
+    load_f r2, 1.5
 
     mov r3, r0
-    add r4, r3, r1
-    sub r5, r3, r1
-    mul r6, r4, r1
-    div r7, r6, r1
 
-    print r4
-    print r5
-    print r6
-    print r7
+    add_i r4, r3, r1
+    sub_i r5, r3, r1
+    mul_i r6, r4, r1
+    div_i r7, r6, r1
 
-    add r8, r2, r2
-    print r8
+    print_i r4
+    print_i r5
+    print_i r6
+    print_i r7
+
+    add_f r8, r2, r2
+    add_f r9, r8, r2
+    sub_f r10, r9, r2
+    mul_f r11, r2, r2
+    div_f r12, r8, r2
+    div_f r13, r2, r2
+    sub_f r14, r2, r2
+
+    cmp_lt_f r15, r2, r9
+    cmp_lt_i r16, r1, r3
+
+    print_f r8
+    print_f r9
+    print_f r10
+    print_f r11
+    print_f r12
+    print_f r13
+    print_f r14
+    print_i r15
+    print_i r16
+
     halt

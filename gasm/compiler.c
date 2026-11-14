@@ -37,6 +37,13 @@ typedef struct {
     String_View label;
     size_t label_col;
     bool has_instr;
+    const InstrInfo *info;
+    size_t col;
+    String_View args;
+} LineHeader;
+
+typedef struct {
+    LineHeader header;
     Instr instr;
 } ParsedLine;
 
@@ -173,22 +180,6 @@ static ParseStatus parse_operand(String_View text, char sig, size_t col, Instr *
             break;
         }
 
-        case 'n': {
-            int64_t int_value;
-            if (sv_to_int(text, &int_value) == PARSE_OK) {
-                operand.kind = OPERAND_INT;
-                operand.as.i = int_value;
-                break;
-            }
-
-            double float_value;
-            ParseStatus status = sv_to_double(text, &float_value);
-            if (status != PARSE_OK) return status;
-            operand.kind = OPERAND_FLOAT;
-            operand.as.f = float_value;
-            break;
-        }
-
         default:
             return PARSE_BAD_SIG;
     }
@@ -257,25 +248,7 @@ static ParseError parse_arguments(String_View text, const char *line,
     return parse_error(PARSE_OK, 1);
 }
 
-static ParseError parse_instruction(String_View text, const char *line,
-                                    Instr *ins) {
-    size_t name_len = 0;
-    while (name_len < text.count && !isspace((unsigned char)text.data[name_len])) {
-        name_len++;
-    }
-
-    String_View name = sv_from_parts(text.data, name_len);
-    ins->info = find_instruction(name);
-    if (!ins->info) {
-        return parse_error(PARSE_UNKNOWN_OP, (size_t)(name.data - line) + 1);
-    }
-
-    ins->col = (size_t)(name.data - line) + 1;
-    sv_shift_by_n(&text, name_len);
-    return parse_arguments(text, line, ins);
-}
-
-static ParseError parse_line(const char *text, ParsedLine *out) {
+static ParseError parse_line_header(const char *text, LineHeader *out) {
     String_View rest = sv_from_cstr(text);
     sv_trim(&rest);
     if (rest.count == 0) return parse_error(PARSE_OK, 1);
@@ -308,30 +281,54 @@ static ParseError parse_line(const char *text, ParsedLine *out) {
         }
     }
 
-    out->has_instr = true;
-    return parse_instruction(rest, text, &out->instr);
-}
-
-static size_t operand_size(OperandKind kind) {
-    switch (kind) {
-        case OPERAND_REG: return REG_SIZE;
-        case OPERAND_INT: return INT_SIZE;
-        case OPERAND_FLOAT: return FLOAT_SIZE;
-        case OPERAND_LABEL: return INT_SIZE;
+    size_t name_len = 0;
+    while (name_len < rest.count && !isspace((unsigned char)rest.data[name_len])) {
+        name_len++;
     }
-    return 0;
+
+    String_View name = sv_from_parts(rest.data, name_len);
+    out->info = find_instruction(name);
+    if (!out->info) {
+        return parse_error(PARSE_UNKNOWN_OP, (size_t)(name.data - text) + 1);
+    }
+
+    out->has_instr = true;
+    out->col = (size_t)(name.data - text) + 1;
+
+    sv_shift_by_n(&rest, name_len);
+    out->args = rest;
+    return parse_error(PARSE_OK, 1);
 }
 
-static size_t instruction_size(const Instr *ins) {
+static ParseError parse_line(const char *text, ParsedLine *out) {
+    ParseError err = parse_line_header(text, &out->header);
+    if (err.status != PARSE_OK || !out->header.has_instr) return err;
+
+    out->instr.info = out->header.info;
+    out->instr.col = out->header.col;
+    return parse_arguments(out->header.args, text, &out->instr);
+}
+
+static size_t operand_width(char sig) {
+    switch (sig) {
+        case 'r': return REG_SIZE;
+        case 'i': return INT_SIZE;
+        case 'f': return FLOAT_SIZE;
+        case 'l': return INT_SIZE;
+        default:  return 0;
+    }
+}
+
+static size_t instruction_size(const InstrInfo *info) {
     size_t size = OPCODE_SIZE;
-    for (size_t i = 0; i < ins->count; i++) {
-        size += operand_size(ins->items[i].kind);
+    for (const char *p = info->sig; *p; p++) {
+        size += operand_width(*p);
     }
     return size;
 }
 
 static ParseError resolve_labels(Instr *ins, const LabelTable *labels, size_t addr) {
-    size_t next_addr = addr + instruction_size(ins);
+    size_t next_addr = addr + instruction_size(ins->info);
     for (size_t i = 0; i < ins->count; i++) {
         Operand *operand = &ins->items[i];
         if (operand->kind != OPERAND_LABEL) continue;
@@ -403,17 +400,16 @@ static int collect_labels(Compiler *compiler, FILE *input_file) {
 
     while (getline(&line, &line_capacity, input_file) != -1) {
         lineno++;
-        ParsedLine parsed = {0};
-        ParseError err = parse_line(line, &parsed);
+        LineHeader header = {0};
+        ParseError err = parse_line_header(line, &header);
 
-        if (err.status == PARSE_OK && parsed.has_label && !label_define(&compiler->labels, parsed.label, pc)) {
-            err = parse_error(PARSE_LABEL_REDEF, parsed.label_col);
+        if (err.status == PARSE_OK && header.has_label
+                && !label_define(&compiler->labels, header.label, pc)) {
+            err = parse_error(PARSE_LABEL_REDEF, header.label_col);
         }
-
-        if (err.status == PARSE_OK && parsed.has_instr) {
-            pc += instruction_size(&parsed.instr);
+        if (err.status == PARSE_OK && header.has_instr) {
+            pc += instruction_size(header.info);
         }
-        instr_free(&parsed.instr);
         if (err.status != PARSE_OK) {
             result = report_error(err, lineno, compiler->filename);
             break;
@@ -437,13 +433,13 @@ static int emit_instructions(Compiler *compiler, FILE *input_file, FILE *output_
         ParsedLine parsed = {0};
         ParseError err = parse_line(line, &parsed);
 
-        if (err.status == PARSE_OK && parsed.has_instr) {
+        if (err.status == PARSE_OK && parsed.header.has_instr) {
             err = resolve_labels(&parsed.instr, &compiler->labels, pc);
             if (err.status == PARSE_OK && !emit_instr(output_file, &parsed.instr)) {
                 err = parse_error(PARSE_ERROR_EMIT, parsed.instr.col);
             }
             if (err.status == PARSE_OK) {
-                pc += instruction_size(&parsed.instr);
+                pc += instruction_size(parsed.instr.info);
             }
         }
         instr_free(&parsed.instr);
