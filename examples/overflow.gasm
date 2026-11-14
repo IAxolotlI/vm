@@ -1,0 +1,7 @@
+start:
+    call recurse
+    halt
+
+recurse:
+    call recurse
+    ret

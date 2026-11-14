@@ -1,4 +1,4 @@
-#include "compiler.h"
+#include "assembler.h"
 #include "logger.h"
 #include "sv.h"
 #include <errno.h>
@@ -51,6 +51,12 @@ int main(int argc, char **argv) {
         }
     }
     
+    if (!input_file_path) {
+        usage(stderr, program);
+        LOG_ERROR("No input file provided");
+        return 1;
+    }
+
     FILE *input = fopen(input_file_path, "r");
     if (!input) {
         LOG_ERROR("Couldn't open file `%s`: %s", input_file_path, strerror(errno));
@@ -58,7 +64,8 @@ int main(int argc, char **argv) {
     }
     FILE *output = fopen(output_file_path, "wb");
     if (!output) {
-        LOG_ERROR("Couldn't open file `%s`: %s", input_file_path, strerror(errno));
+        LOG_ERROR("Couldn't open file `%s`: %s", output_file_path, strerror(errno));
+        fclose(input);
         return 1;
     }
     int result = emit_bytecode_from_program(input_file_path, input, output);

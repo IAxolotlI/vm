@@ -1,22 +1,18 @@
-    load_i r0, 3
-    load_i r1, 5
-    load_i r2, 0
+start:
+    load_i r1, 3
+    load_i r2, 5
+    cmp_lt_i r3, r1, r2
+    jz r3, not_less
+    print_i r1
+    jmp end
 
-    cmp_lt_i r3, r0, r1
-    jnz r3, less
-    load_i r2, 100
-    jmp done
+not_less:
+    print_i r2
 
-less:
-    cmp_lt_i r4, r1, r0
-    jz r4, equal
-    load_i r2, 200
-    jmp done
-
-equal:
-    load_i r2, 42
-    jmp done
+end:
+    load_i r4, 0
+    jnz r4, done
+    print_i r4
 
 done:
-    print_i r2
     halt

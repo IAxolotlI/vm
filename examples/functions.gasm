@@ -1,0 +1,20 @@
+sum_square:
+    call add
+    mov r1, r0
+    call square
+    ret
+
+add:
+    add_i r0, r1, r2
+    ret
+
+square:
+    mul_i r0, r1, r1
+    ret
+
+start:
+    load_i r1, 3
+    load_i r2, 4
+    call sum_square
+    print_i r0
+    halt

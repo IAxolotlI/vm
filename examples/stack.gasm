@@ -1,0 +1,10 @@
+start:
+    load_i r1, 1
+    load_i r2, 2
+    push r1
+    push r2
+    pop r1
+    pop r2
+    print_i r1
+    print_i r2
+    halt

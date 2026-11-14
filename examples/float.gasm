@@ -1,0 +1,14 @@
+start:
+    load_f r1, 1.5
+    load_f r2, 4.0
+    add_f r0, r1, r2
+    print_f r0
+    sub_f r0, r1, r2
+    print_f r0
+    mul_f r0, r1, r2
+    print_f r0
+    div_f r0, r1, r2
+    print_f r0
+    cmp_lt_f r0, r1, r2
+    print_i r0
+    halt

@@ -29,6 +29,14 @@ typedef enum {
     OP_JMP        = 17,
     OP_JMP_IF     = 18,
     OP_JMP_IF_NOT = 19,
+    OP_CALL       = 20,
+    OP_RET        = 21,
+    OP_ENTER      = 22,
+    OP_LEAVE      = 23,
+    OP_PUSH       = 24,
+    OP_POP        = 25,
+    OP_LOAD       = 26,
+    OP_STORE      = 27,
 } Opcode;
 
 typedef struct {
@@ -40,7 +48,6 @@ typedef struct {
 static InstrInfo instructions[] = {
     {"nop",      "",    OP_NOP},
     {"halt",     "",    OP_HALT},
-
     {"load_i",   "ri",  OP_LOAD_I},
     {"add_i",    "rrr", OP_ADD_I},
     {"sub_i",    "rrr", OP_SUB_I},
@@ -55,11 +62,18 @@ static InstrInfo instructions[] = {
     {"div_f",    "rrr", OP_DIV_F},
     {"cmp_lt_f", "rrr", OP_CMP_LT_F},
     {"print_f",  "r",   OP_PRINT_F},
-
     {"mov",      "rr",  OP_MOV},
     {"jmp",      "l",   OP_JMP},
     {"jnz",      "rl",  OP_JMP_IF},
     {"jz",       "rl",  OP_JMP_IF_NOT},
+    {"call",     "l",   OP_CALL},
+    {"ret",      "",    OP_RET},
+    {"enter",    "i",   OP_ENTER},
+    {"leave",    "",    OP_LEAVE},
+    {"push",     "r",   OP_PUSH},
+    {"pop",      "r",   OP_POP},
+    {"load",     "rri", OP_LOAD},
+    {"store",    "rir", OP_STORE},
 };
 
 static const size_t instructions_count

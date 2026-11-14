@@ -7,6 +7,8 @@
 #include "opcodes.h"
 #include "sv.h"
 
+#define LABEL_MARK ':'
+
 typedef enum {
     PARSE_OK = 0,
     PARSE_EMPTY_ARG,
@@ -55,6 +57,38 @@ typedef struct {
     size_t capacity;
     size_t col;
 } Instr;
+
+typedef struct {
+    char *name;
+    size_t addr;
+} Label;
+
+typedef struct {
+    Label *items;
+    size_t count;
+    size_t capacity;
+} LabelTable;
+
+typedef struct {
+    const char *filename;
+    LabelTable labels;
+    size_t code_len;
+} Compiler;
+
+typedef struct {
+    bool has_label;
+    String_View label;
+    size_t label_col;
+    bool has_instr;
+    const InstrInfo *info;
+    size_t col;
+    String_View args;
+} LineHeader;
+
+typedef struct {
+    LineHeader header;
+    Instr instr;
+} ParsedLine;
 
 int emit_bytecode_from_program(const char *filename, FILE *input_file, FILE *output_file);
 

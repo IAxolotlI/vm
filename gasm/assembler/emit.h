@@ -8,7 +8,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "compiler.h"
+#include "assembler.h"
 #include "opcodes.h"
 
 static inline bool write_u8(FILE *out, uint8_t value) {

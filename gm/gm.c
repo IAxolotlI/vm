@@ -1,13 +1,60 @@
-#include "logger.h"
-#include "gm.h"
-#include "opcodes.h"
-#include <stdbool.h>
 #include <stdio.h>
-#include <errno.h>
 #include <assert.h>
 #include <stdlib.h>
 #include <string.h>
 #include <inttypes.h>
+#include "logger.h"
+#include "gm.h"
+#include "abi.h"
+#include "opcodes.h"
+#include "memory.h"
+
+static bool vm_read_byte(Vm *vm, uint8_t *out) {
+    if (vm->ip >= vm->code_len) {
+        LOG_ERROR("Read byte out of bounds: ip = %zu, code_len = %zu",
+                  vm->ip, vm->code_len);
+        vm->status = VM_FAULT_OOB;
+        return false;
+    }
+    *out = vm->code[vm->ip++];
+    return true;
+}
+
+static bool vm_read_8byte(Vm *vm, uint64_t *out) {
+    if (vm->ip > vm->code_len || vm->code_len - vm->ip < 8) {
+        LOG_ERROR("Read 8 bytes out of bounds: ip = %zu, code_len = %zu",
+                  vm->ip, vm->code_len);
+        vm->status = VM_FAULT_OOB;
+        return false;
+    }
+    const uint8_t *p = &vm->code[vm->ip];
+    *out = (uint64_t)p[0]
+         | ((uint64_t)p[1] << 8)
+         | ((uint64_t)p[2] << 16)
+         | ((uint64_t)p[3] << 24)
+         | ((uint64_t)p[4] << 32)
+         | ((uint64_t)p[5] << 40)
+         | ((uint64_t)p[6] << 48)
+         | ((uint64_t)p[7] << 56);
+    vm->ip += 8;
+    return true;
+}
+
+const char *vm_get_status(VmStatus s) {
+    switch (s) {
+        case VM_RUNNING:               return "Running";
+        case VM_HALTED:                return "Halted";
+        case VM_FAULT_BAD_OP:          return "Bad operation";
+        case VM_FAULT_BAD_IP:          return "Bad instruction pointer";
+        case VM_FAULT_OOB:             return "Out of bounds";
+        case VM_FAULT_DIV_ZERO:        return "Division by zero";
+        case VM_FAULT_STACK_OVERFLOW:  return "Stack overflow";
+        case VM_FAULT_STACK_UNDERFLOW: return "Stack underflow";
+        case VM_FAULT_BAD_FRAME:       return "Bad stack frame";
+        case VM_FAULT_BAD_ADDR:        return "Bad memory address";
+        default:                       return "Unknown";
+    }
+}
 
 static int64_t add_i64(int64_t a, int64_t b) {
     uint64_t r = (uint64_t)a + (uint64_t)b;
@@ -30,61 +77,53 @@ static int64_t mul_i64(int64_t a, int64_t b) {
     return out;
 }
 
-const char *vm_get_status(VmStatus s) {
-    switch (s) {
-        case VM_RUNNING:         return "Running";
-        case VM_HALTED:          return "Halted";
-        case VM_FAULT_BAD_OP:    return "Bad operation";
-        case VM_FAULT_BAD_IP:    return "Bad instruction pointer";
-        case VM_FAULT_OOB:       return "Out of bounds";
-        case VM_FAULT_DIV_ZERO:  return "Division by zero";
-        case VM_FAULT_OVERFLOW:  return "Number overflow";
-        default:                 return "Unknown";
-    }
-}
+static bool vm_relative_target(const Vm *vm, int64_t off, size_t *out) {
+    uint64_t base = vm->ip;
+    uint64_t target;
 
-static bool vm_read_byte(Vm *vm, uint8_t *out) {
-    if (vm->ip >= vm->code_len) {
-        LOG_ERROR("Read8 out of bounadries: ip = %zu, code_len = %zu",
-                  vm->ip, vm->code_len);
-        vm->status = VM_FAULT_OOB;
-        return false;
+    if (off >= 0) {
+        uint64_t delta = (uint64_t)off;
+        if (delta > vm->code_len || base > vm->code_len - delta) {
+            return false;
+        }
+        target = base + delta;
     }
-    *out = vm->code[vm->ip++];
-    return true;
-}
+    else {
+        uint64_t delta = (uint64_t)(-(off + 1)) + 1;
+        if (delta > base) return false;
+        target = base - delta;
+    }
 
-static bool vm_read_8byte(Vm *vm, uint64_t *out) {
-    if (vm->code_len - vm->ip < 8) {
-        LOG_ERROR("Read8 out of bounadries: ip = %zu, code_len = %zu",
-                  vm->ip, vm->code_len);
-        vm->status = VM_FAULT_OOB;
-        return false;
-    }
-    const uint8_t *p = &vm->code[vm->ip];
-    *out = (uint64_t)p[0]
-         | ((uint64_t)p[1] << 8)
-         | ((uint64_t)p[2] << 16)
-         | ((uint64_t)p[3] << 24)
-         | ((uint64_t)p[4] << 32)
-         | ((uint64_t)p[5] << 40)
-         | ((uint64_t)p[6] << 48)
-         | ((uint64_t)p[7] << 56);
-    vm->ip += 8;
+    if (target >= vm->code_len) return false;
+    *out = (size_t)target;
     return true;
 }
 
 static bool vm_jump(Vm *vm, int64_t off) {
-    int64_t target = (int64_t)vm->ip + off;
-    if (target < 0 || (uint64_t)target >= vm->code_len) {
-        LOG_ERROR("JMP out of boundaries: ip=%zu off=%" PRId64 " target=%" PRId64,
-                  vm->ip, off, target);
+    size_t target;
+    if (!vm_relative_target(vm, off, &target)) {
+        LOG_ERROR("Jump out of boundaries: ip=%zu off=%" PRId64,
+                  vm->ip, off);
         vm->status = VM_FAULT_BAD_IP;
         return false;
     }
-    vm->ip = (size_t)target;
+    vm->ip = target;
     return true;
 }
+
+static bool vm_call(Vm *vm, int64_t off) {
+    size_t target;
+    if (!vm_relative_target(vm, off, &target)) {
+        LOG_ERROR("Call out of boundaries: ip=%zu off=%" PRId64,
+                  vm->ip, off);
+        vm->status = VM_FAULT_BAD_IP;
+        return false;
+    }
+    if (!stack_push(vm, (Word) { .u = vm->ip })) return false;
+    vm->ip = target;
+    return true;
+}
+
 
 void vm_execute_step(Vm *vm) {
     if (vm->status != VM_RUNNING) return;
@@ -104,7 +143,9 @@ void vm_execute_step(Vm *vm) {
             uint8_t  dst;
             uint64_t imm;
             if (!vm_read_byte(vm, &dst) || !vm_read_8byte(vm, &imm)) break;
-            vm->regs[dst] = (Word){ .i = ((int64_t)imm) };
+            int64_t val;
+            memcpy(&val, &imm, sizeof val);
+            vm->regs[dst] = (Word){ .i = val };
             break;
         }
 
@@ -237,56 +278,122 @@ void vm_execute_step(Vm *vm) {
             printf("%g\n", vm->regs[src].f);
             break;
         }
+
+        case OP_ENTER: {
+            uint64_t raw;
+            int64_t val;
+            if (!vm_read_8byte(vm, &raw)) break;
+            memcpy(&val, &raw, sizeof val);
+            if (val < 0 || val % GM_STACK_ALIGN != 0) {
+                LOG_ERROR("Argument of enter instruction "
+                          "must be >= 0 and divisible by 8");
+                vm->status = VM_FAULT_BAD_FRAME;
+                break;
+            }
+            if (vm->regs[RSP].u < vm->stack_base + (uint64_t)val + GM_STACK_ALIGN) {
+                LOG_ERROR("Argument of enter instruction "
+                          "must be less than space left on the stack");
+                vm->status = VM_FAULT_STACK_OVERFLOW;
+                break;
+            }
+            if (!stack_push(vm, vm->regs[RBP])) break;
+
+            vm->regs[RBP] = vm->regs[RSP];
+            vm->regs[RSP].u -= (uint64_t)val;
+            break;
+        }
         
+        case OP_LEAVE: {
+            uint64_t bp = vm->regs[RBP].u;
+            if (bp < vm->regs[RSP].u) {
+                LOG_ERROR("Base pointer is further than stack pointer:"
+                          " bp=%" PRIu64 ", rsp=%" PRIu64,
+                          bp, vm->regs[RSP].u);
+                vm->status = VM_FAULT_BAD_FRAME;
+                break;
+            }
+            if (bp > vm->stack_top - GM_STACK_ALIGN) {
+                LOG_ERROR("Base pointer is bigger than stack top:"
+                          " bp=%" PRIu64 ", top=%zu",
+                          bp, vm->stack_top);
+                vm->status = VM_FAULT_BAD_FRAME;
+                break;
+            }
+            if (bp % GM_STACK_ALIGN != 0) {
+                LOG_ERROR("Base pointer isn't aligned by %d bytes",
+                          GM_STACK_ALIGN);
+                vm->status = VM_FAULT_BAD_FRAME;
+                break;
+            }
+            vm->regs[RSP].u = bp;
+            stack_pop(vm, &vm->regs[RBP]);
+            break;
+        }
+        
+        case OP_CALL: {
+            uint64_t raw;
+            int64_t off;
+            if (!vm_read_8byte(vm, &raw)) break;
+            memcpy(&off, &raw, sizeof off);
+            vm_call(vm, off);
+            break;
+        }
+
+        case OP_RET: {
+            Word addr;
+            if (!stack_pop(vm, &addr)) break;
+            if (addr.u >= vm->code_len) {
+                LOG_ERROR("RET out of boundaries: target=%" PRIu64
+                        ", code_len=%zu", addr.u, vm->code_len);
+                vm->status = VM_FAULT_BAD_IP;
+                break;
+            }
+            vm->ip = (size_t)addr.u;
+            break;
+        }
+        case OP_PUSH: {
+            uint8_t src;
+            if (!vm_read_byte(vm, &src)) break;
+            if (!stack_push(vm, vm->regs[src])) break;
+            break;
+        }
+        case OP_POP: {
+            uint8_t dst;
+            if (!vm_read_byte(vm, &dst)) break;
+            if (!stack_pop(vm, &vm->regs[dst])) break;
+            break;
+        }
+        case OP_LOAD: {
+            uint8_t dst, base;
+            uint64_t raw;
+            int64_t off;
+            if (!vm_read_byte(vm, &dst) || !vm_read_byte(vm, &base) || !vm_read_8byte(vm, &raw)) break;
+            memcpy(&off, &raw, sizeof off);
+            uint64_t addr;
+            if (!stack_addr(vm, vm->regs[base].u, off, &addr)) {
+                vm->status = VM_FAULT_BAD_ADDR;
+                break;
+            }
+            vm->regs[dst].u = mem_read_u64(vm, addr);
+            break;
+        }
+        case OP_STORE: {
+            uint8_t base, src;
+            uint64_t raw;
+            int64_t off;
+            if (!vm_read_byte(vm, &base) || !vm_read_8byte(vm, &raw) || !vm_read_byte(vm, &src)) break;
+            memcpy(&off, &raw, sizeof off);
+            uint64_t addr;
+            if (!stack_addr(vm, vm->regs[base].u, off, &addr)) {
+                vm->status = VM_FAULT_BAD_ADDR;
+                break;
+            }
+            mem_write_u64(vm, addr, vm->regs[src].u);
+            break;
+        }
         default:
             LOG_ERROR("Unknown opcode 0x%02X at IP %zu", opcode, vm->ip - 1);
             vm->status = VM_FAULT_BAD_OP;
             break;
     }
-}
-
-uint8_t *load_program_from_file(Vm *vm, const char *input_file_path) {
-    FILE *input_file = fopen(input_file_path, "rb");
-    if (!input_file) {
-        LOG_ERROR("Couldn't open file `%s`: %s", input_file_path, strerror(errno));
-        return NULL;
-    }
-    fseek(input_file, 0, SEEK_END);
-    long size = ftell(input_file);
-    if (size <= 0) {
-        LOG_ERROR("%s is empty or unreadable", input_file_path);
-        fclose(input_file);
-        return NULL;
-    }
-    rewind(input_file);
-    
-    uint8_t *code = malloc((size_t)size);
-    if (!code) {
-        LOG_ERROR("Malloc failed");
-        fclose(input_file);
-        return NULL;
-    }
-
-    if (fread(code, 1, (size_t)size, input_file) != (size_t)size) {
-        LOG_ERROR("Failed to read file `%s`: %s", input_file_path, strerror(errno));
-        free(code);
-        fclose(input_file);
-        return NULL;
-    }
-    fclose(input_file);
-    vm->code = code;
-    vm->code_len = (size_t)size;
-    
-    return code;
-}
-
-int execute_program(Vm *vm) {
-    while (vm->status == VM_RUNNING) {
-        vm_execute_step(vm);
-    }
-    if (vm->status != VM_HALTED) {
-        LOG_ERROR("VM stoppped: %s\n%zu", vm_get_status(vm->status), vm->ip);
-        return 1;
-    }
-    return 0;
 }

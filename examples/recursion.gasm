@@ -1,0 +1,24 @@
+start:
+    load_i r1, 5
+    call fact
+    print_i r0
+    halt
+
+fact:
+    enter 8
+    store rbp, -8, r1
+    load_i r2, 1
+    cmp_lt_i r3, r1, r2
+    jz r3, recurse
+    load_i r0, 1
+    leave
+    ret
+
+recurse:
+    load r1, rbp, -8
+    sub_i r1, r1, r2
+    call fact
+    load r2, rbp, -8
+    mul_i r0, r0, r2
+    leave
+    ret

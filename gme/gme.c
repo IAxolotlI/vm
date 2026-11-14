@@ -1,13 +1,14 @@
-#include "gm.h"
-#include "sv.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
 #include "logger.h"
+#include "abi.h"
+#include "sv.h"
+#include "gminit.h"
 
 static void usage(FILE *stream, const char *program) {
-    fprintf(stream, "Usage: %s [OPTIONS] <input.gasm>\n", program);
+    fprintf(stream, "Usage: %s [OPTIONS] <input.gm>\n", program);
     fprintf(stream, "OPTIONS:\n");
     fprintf(stream, "    -h              Print this help.\n");
 }
@@ -36,10 +37,25 @@ int main(int argc, char **argv) {
         }
     }
 
-    Vm vm = {0};
+    if (!input_file_path) {
+        usage(stderr, program);
+        LOG_ERROR("No input file provided");
+        return 1;
+    }
+
+    Vm vm;
+    if (!vm_init(&vm, GM_MEM_SIZE, GM_STACK_SIZE)) {
+        return 1;
+    }
+
     uint8_t *code = load_program_from_file(&vm, input_file_path);
-    if (!code) return 1;
+    if (!code) {
+        vm_destroy(&vm);
+        return 1;
+    }
+
     int result = execute_program(&vm);
     free(code);
+    vm_destroy(&vm);
     return result;
 }
