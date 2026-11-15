@@ -1,6 +1,18 @@
 # Gm
 
-Gigachad machine
+#### Generic machine
+
+## Сборка и запуск
+
+```sh
+./build.sh --build                        # собрать build/gasm и build/gme
+./build.sh --examples                     # выполнить examples/*.gasm после --build
+
+./build/gasm examples/arith.gasm -o arith.gm
+./build/gme arith.gm
+```
+
+Требуются gcc и POSIX `getline`/`strndup`.
 
 ## Состав
 
@@ -20,18 +32,6 @@ gme/gme.c ──> gminit ──> gm.c ──> memory.c
 gasm/gasm.c ──> assembler ──> parser.c
                        └───> emit.h
 ```
-
-## Сборка и запуск
-
-```sh
-./build.sh --build                        # собрать build/gasm и build/gme
-./build.sh --examples                     # выполнить examples/*.gasm после --build
-
-./build/gasm examples/arith.gasm -o arith.gm
-./build/gme arith.gm
-```
-
-Требуются gcc и POSIX `getline`/`strndup`.
 
 ## Примеры
 
