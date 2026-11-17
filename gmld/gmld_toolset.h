@@ -45,14 +45,16 @@ typedef struct
 } GmRelocation;
 
 
-typedef struct GmFile
+typedef struct
 {
 	uint8_t header[GM_HEADER_SIZE];
 	size_t seccount;
 	GmSection*sections;
-};
+} GmFile;
 
 //some of the following funcitons will probably get moved into .c and made static
+
+uint8_t*gmld_update_abi(const uint8_t*file, size_t*reslength); //for testing
 
 GmSection* gmld_parse_sections(const uint8_t* file);
 GmSymbol* gmld_parse_symtab(const GmSection*symtab);

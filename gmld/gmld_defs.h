@@ -11,30 +11,31 @@
 
 typedef enum 
 {
-	NONE=0, //ignored or deleted
-	TEXT,
-	DATA,
-	RODATA,
-	SYMTAB,
-	DYNTAB,
-	NOTE,
-	DEBUG,
-	RELOCTAB
+	GMLD_NONE=0, //ignored or deleted
+	GMLD_TEXT,
+	GMLD_DATA,
+	GMLD_RODATA,
+	GMLD_SYMTAB,
+	GMLD_DYNTAB,
+	GMLD_NOTE,
+	GMLD_DEBUG,
+	GMLD_RELOCTAB
 } SectionType;
 
 typedef enum
 {
-	WRITE	=1u<<1,
-	READ		=1u<<2,
-	EXECUTE	=1u<<3,
-	ENTRY	=1u<<4 //text section serves as an entry point
+	GMLD_WRITE	=1u<<1,
+	GMLD_READ		=1u<<2,
+	GMLD_EXECUTE	=1u<<3,
+	GMLD_ENTRY	=1u<<4 //text section serves as an entry point
 } SectionFlags;
 
 typedef struct
 {
 	size_t seccounter;
-	size_t sectable_offset; //offset of the table from the beginning of the file
+	size_t sectable_offset; //offset of the table (immideately after the header) from the beginning of the file
 	size_t strtable_offset; //similar but for section names
+	size_t strtable_size; //combined size of all section names
 } gm_sectable_header; //section header as literally stored in the file
 
 typedef struct
