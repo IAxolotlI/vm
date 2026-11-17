@@ -29,7 +29,7 @@ typedef enum {
 
 typedef struct {
     ParseStatus status;
-    size_t err_col;
+    size_t      err_col;
 } ParseError;
 
 typedef enum {
@@ -40,12 +40,12 @@ typedef enum {
 } OperandKind;
 
 typedef struct {
-    OperandKind kind;
-    size_t col;
+    OperandKind     kind;
+    size_t          col;
     union {
-        uint8_t reg;
-        int64_t i;
-        double f;
+        uint8_t     reg;
+        int64_t     i;
+        double      f;
         String_View label;
     } as;
 } Operand;

@@ -18,7 +18,7 @@ uint64_t mem_read_u64(Vm *vm, uint64_t addr) {
 }
 
 bool stack_push(Vm *vm, Word v) {
-    uint64_t sp = vm->regs[RSP].u;
+    uint64_t sp = vm->regs[RSP];
     if (sp > vm->stack_top) {
         LOG_ERROR("Stack pointer is greater than stack top");
         vm->status = VM_FAULT_BAD_FRAME;
@@ -34,13 +34,13 @@ bool stack_push(Vm *vm, Word v) {
         return false;
     }
     sp -= GM_STACK_ALIGN;
-    mem_write_u64(vm, sp, v.u);
-    vm->regs[RSP].u = sp;
+    mem_write_u64(vm, sp, v);
+    vm->regs[RSP] = sp;
     return true;
 }
 
 bool stack_pop(Vm *vm, Word *out) {
-    uint64_t sp = vm->regs[RSP].u;
+    uint64_t sp = vm->regs[RSP];
     if (sp > vm->stack_top) {
         LOG_ERROR("Stack pointer is greater than stack top");
         vm->status = VM_FAULT_BAD_FRAME;
@@ -55,8 +55,8 @@ bool stack_pop(Vm *vm, Word *out) {
         vm->status = VM_FAULT_STACK_UNDERFLOW;
         return false;
     }
-    out->u = mem_read_u64(vm, sp);
-    vm->regs[RSP].u = sp + GM_STACK_ALIGN;
+    *out = mem_read_u64(vm, sp);
+    vm->regs[RSP] = sp + GM_STACK_ALIGN;
     return true;
 }
 

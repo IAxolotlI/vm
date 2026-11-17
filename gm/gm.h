@@ -5,12 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "opcodes.h"
-
-typedef union {
-    int64_t  i;
-    double   f;
-    uint64_t u;
-} Word;
+#include "nanbox.h"
 
 typedef enum {
     VM_RUNNING = 0,
@@ -23,11 +18,13 @@ typedef enum {
     VM_FAULT_STACK_UNDERFLOW,
     VM_FAULT_BAD_FRAME,
     VM_FAULT_BAD_ADDR,
+    VM_FAULT_NULL_REF,
+    VM_FAULT_OOM,
 } VmStatus;
 
 typedef struct {
-    Word          regs[REG_COUNT];
-    const uint8_t *code;
+    Word           regs[REG_COUNT];
+    const uint8_t  *code;
     size_t         code_len;
 
     uint8_t        *mem;

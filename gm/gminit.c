@@ -34,8 +34,8 @@ bool vm_init(Vm *vm, size_t mem_size, size_t stack_size) {
     vm->mem_size   = mem_size;
     vm->stack_top  = mem_size;
     vm->stack_base = mem_size - stack_size;
-    vm->regs[RSP].u = vm->stack_top;
-    vm->regs[RBP].u = vm->stack_top;
+    vm->regs[RSP] = vm->stack_top;
+    vm->regs[RBP] = vm->stack_top;
     vm->ip = 0;
     vm->status = VM_RUNNING;
     return true;

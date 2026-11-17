@@ -1,6 +1,6 @@
 #!/bin/bash
 mkdir -p build/
-FLAGS="-ggdb -Wall -Wextra"
+FLAGS="-ggdb -Wall -Wextra -pedantic"
 INCLUDE_GME="-Igm -Icommon -Iinterface"
 INCLUDE_GASM="-Igasm/assembler -Icommon -Iinterface"
 GME_COMMON_DIRS=(

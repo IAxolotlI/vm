@@ -1,4 +1,5 @@
 start:
+    print_f r0
     load_f r1, 1.5
     load_f r2, 4.0
     add_f r0, r1, r2
@@ -11,4 +12,17 @@ start:
     print_f r0
     cmp_lt_f r0, r1, r2
     print_i r0
+    load_f r3, 0.0
+    load_f r4, 0.0
+    div_f r0, r3, r4
+    print_f r0
+    load_f r3, -0.0
+    load_f r4, 0.0
+    div_f r0, r3, r4
+    print_f r0
+    load_f r3, 1.0
+    load_f r4, 0.0
+    div_f r0, r3, r4
+    print_f r0
+
     halt

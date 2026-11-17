@@ -43,11 +43,11 @@ static inline void gm_put_u64(uint8_t *p, uint64_t value) {
 
 static inline bool gm_write_header(FILE *out, uint64_t entry, uint64_t code_len) {
     uint8_t header[GM_HEADER_SIZE] = {0};
-    memcpy(header, GM_MAGIC, sizeof GM_MAGIC);
+    memcpy(header, GM_MAGIC, sizeof(GM_MAGIC));
     gm_put_u32(header + 4, GM_FORMAT_VERSION);
     gm_put_u64(header + 8, entry);
     gm_put_u64(header + 16, code_len);
-    return fwrite(header, 1, sizeof header, out) == sizeof header;
+    return fwrite(header, 1, sizeof(header), out) == sizeof(header);
 }
 
 #endif // FORMAT_H

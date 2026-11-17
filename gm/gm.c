@@ -8,6 +8,9 @@
 #include "abi.h"
 #include "opcodes.h"
 #include "memory.h"
+#include "nanbox.h"
+
+static const int64_t INT48_MIN = -(1LL << 47);
 
 static bool vm_read_byte(Vm *vm, uint8_t *out) {
     if (vm->ip >= vm->code_len) {
@@ -52,6 +55,8 @@ const char *vm_get_status(VmStatus s) {
         case VM_FAULT_STACK_UNDERFLOW: return "Stack underflow";
         case VM_FAULT_BAD_FRAME:       return "Bad stack frame";
         case VM_FAULT_BAD_ADDR:        return "Bad memory address";
+        case VM_FAULT_NULL_REF:        return "Null dereference";
+        case VM_FAULT_OOM:             return "Out of memory";
         default:                       return "Unknown";
     }
 }
@@ -59,21 +64,21 @@ const char *vm_get_status(VmStatus s) {
 static int64_t add_i64(int64_t a, int64_t b) {
     uint64_t r = (uint64_t)a + (uint64_t)b;
     int64_t out;
-    memcpy(&out, &r, sizeof out);
+    memcpy(&out, &r, sizeof(out));
     return out;
 }
 
 static int64_t sub_i64(int64_t a, int64_t b) {
     uint64_t r = (uint64_t)a - (uint64_t)b;
     int64_t out;
-    memcpy(&out, &r, sizeof out);
+    memcpy(&out, &r, sizeof(out));
     return out;
 }
 
 static int64_t mul_i64(int64_t a, int64_t b) {
     uint64_t r = (uint64_t)a * (uint64_t)b;
     int64_t out;
-    memcpy(&out, &r, sizeof out);
+    memcpy(&out, &r, sizeof(out));
     return out;
 }
 
@@ -119,7 +124,7 @@ static bool vm_call(Vm *vm, int64_t off) {
         vm->status = VM_FAULT_BAD_IP;
         return false;
     }
-    if (!stack_push(vm, (Word) { .u = vm->ip })) return false;
+    if (!stack_push(vm, vm->ip)) return false;
     vm->ip = target;
     return true;
 }
@@ -144,8 +149,8 @@ void vm_execute_step(Vm *vm) {
             uint64_t imm;
             if (!vm_read_byte(vm, &dst) || !vm_read_8byte(vm, &imm)) break;
             int64_t val;
-            memcpy(&val, &imm, sizeof val);
-            vm->regs[dst] = (Word){ .i = val };
+            memcpy(&val, &imm, sizeof(val));
+            vm->regs[dst] = nb_box_int(val);
             break;
         }
 
@@ -154,8 +159,8 @@ void vm_execute_step(Vm *vm) {
             uint64_t imm;
             if (!vm_read_byte(vm, &dst) || !vm_read_8byte(vm, &imm)) break;
             double d;
-            memcpy(&d, &imm, sizeof d);
-            vm->regs[dst] = (Word){.f = d };
+            memcpy(&d, &imm, sizeof(d));
+            vm->regs[dst] = nb_box_double(d);
             break;
         }
 
@@ -169,77 +174,91 @@ void vm_execute_step(Vm *vm) {
         case OP_ADD_I: {
             uint8_t dst, a, b;
             if (!vm_read_byte(vm, &dst) || !vm_read_byte(vm, &a) || !vm_read_byte(vm, &b)) break;
-            vm->regs[dst] = (Word){ .i = add_i64(vm->regs[a].i, vm->regs[b].i) };
+            int64_t x = nb_as_int(vm->regs[a]);
+            int64_t y = nb_as_int(vm->regs[b]);
+            vm->regs[dst] = nb_box_int(add_i64(x, y));
             break;
         }
 
         case OP_ADD_F: {
             uint8_t dst, a, b;
             if (!vm_read_byte(vm, &dst) || !vm_read_byte(vm, &a) || !vm_read_byte(vm, &b)) break;
-            vm->regs[dst] = (Word){ .f = vm->regs[a].f + vm->regs[b].f };
+            double x = nb_as_double(vm->regs[a]);
+            double y = nb_as_double(vm->regs[b]);
+            vm->regs[dst] = nb_box_double(x + y);
             break;
         }
         
         case OP_SUB_I: {
             uint8_t dst, a, b;
             if (!vm_read_byte(vm, &dst) || !vm_read_byte(vm, &a) || !vm_read_byte(vm, &b)) break;
-            vm->regs[dst] = (Word){ .i = sub_i64(vm->regs[a].i, vm->regs[b].i) };
+            int64_t x = nb_as_int(vm->regs[a]);
+            int64_t y = nb_as_int(vm->regs[b]);
+            vm->regs[dst] = nb_box_int(sub_i64(x, y));
             break;
         }
         
         case OP_SUB_F: {
             uint8_t dst, a, b;
             if (!vm_read_byte(vm, &dst) || !vm_read_byte(vm, &a) || !vm_read_byte(vm, &b)) break;
-            vm->regs[dst] = (Word){ .f = vm->regs[a].f - vm->regs[b].f };
+            double x = nb_as_double(vm->regs[a]);
+            double y = nb_as_double(vm->regs[b]);
+            vm->regs[dst] = nb_box_double(x - y);
             break;
         }
                 
         case OP_MUL_I: {
             uint8_t dst, a, b;
             if (!vm_read_byte(vm, &dst) || !vm_read_byte(vm, &a) || !vm_read_byte(vm, &b)) break;
-            vm->regs[dst] = (Word){ .i = mul_i64(vm->regs[a].i, vm->regs[b].i) };
+            int64_t x = nb_as_int(vm->regs[a]);
+            int64_t y = nb_as_int(vm->regs[b]);
+            vm->regs[dst] = nb_box_int(mul_i64(x, y));
             break;
         }
         
         case OP_MUL_F: {
             uint8_t dst, a, b;
             if (!vm_read_byte(vm, &dst) || !vm_read_byte(vm, &a) || !vm_read_byte(vm, &b)) break;
-            vm->regs[dst] = (Word){ .f = vm->regs[a].f * vm->regs[b].f };
+            double x = nb_as_double(vm->regs[a]);
+            double y = nb_as_double(vm->regs[b]);
+            vm->regs[dst] = nb_box_double(x * y);
             break;
         }
         
         case OP_DIV_I: {
             uint8_t dst, a, b;
             if (!vm_read_byte(vm, &dst) || !vm_read_byte(vm, &a) || !vm_read_byte(vm, &b)) break;
-            int64_t x = vm->regs[a].i, y = vm->regs[b].i;
+            int64_t x = nb_as_int(vm->regs[a]);
+            int64_t y = nb_as_int(vm->regs[b]);
             if (y == 0) { vm->status = VM_FAULT_DIV_ZERO; break; }
-            if (x == INT64_MIN && y == -1) {
-                vm->regs[dst].i = INT64_MIN;
+            if (x == INT48_MIN && y == -1) {
+                vm->regs[dst] = nb_box_int(INT48_MIN);
                 break;
             }
-            vm->regs[dst].i = x / y;
+            vm->regs[dst] = nb_box_int(x / y);
             break;
         }
 
         case OP_DIV_F: {
             uint8_t dst, a, b;
             if (!vm_read_byte(vm, &dst) || !vm_read_byte(vm, &a) || !vm_read_byte(vm, &b)) break;
-            double x = vm->regs[a].f, y = vm->regs[b].f;
-            vm->regs[dst].f = x / y;
+            double x = nb_as_double(vm->regs[a]);
+            double y = nb_as_double(vm->regs[b]);
+            vm->regs[dst] = nb_box_double(x / y);
             break;
         }
         
         case OP_CMP_LT_I: {
             uint8_t dst, a, b;
             if (!vm_read_byte(vm, &dst) || !vm_read_byte(vm, &a) || !vm_read_byte(vm, &b)) break;
-            vm->regs[dst] = (Word){ .i = vm->regs[a].i < vm->regs[b].i };
+            vm->regs[dst] = nb_box_int(nb_as_int(vm->regs[a]) < nb_as_int(vm->regs[b]));
             break;
         }
 
         case OP_CMP_LT_F: {
             uint8_t dst, a, b;
             if (!vm_read_byte(vm, &dst) || !vm_read_byte(vm, &a) || !vm_read_byte(vm, &b)) break;
-            vm->regs[dst] = (Word){ .i = vm->regs[a].f < vm->regs[b].f };
+            vm->regs[dst] = nb_box_int(nb_as_double(vm->regs[a]) < nb_as_double(vm->regs[b]));
             break;
         }
         
@@ -247,7 +266,7 @@ void vm_execute_step(Vm *vm) {
             uint64_t raw;
             int64_t off;
             if (!vm_read_8byte(vm, &raw)) break;
-            memcpy(&off, &raw, sizeof off);
+            memcpy(&off, &raw, sizeof(off));
             vm_jump(vm, off);
             break;
         }
@@ -258,8 +277,8 @@ void vm_execute_step(Vm *vm) {
             uint64_t raw;
             int64_t off;
             if (!vm_read_byte(vm, &src) || !vm_read_8byte(vm, &raw)) break;
-            memcpy(&off, &raw, sizeof off);
-            bool take = vm->regs[src].i;
+            memcpy(&off, &raw, sizeof(off));
+            bool take = nb_as_int(vm->regs[src]);
             if ((Opcode)opcode == OP_JMP_IF_NOT) take = !take;
             if (take) vm_jump(vm, off);
             break;
@@ -268,14 +287,14 @@ void vm_execute_step(Vm *vm) {
         case OP_PRINT_I: {
             uint8_t src;
             if (!vm_read_byte(vm, &src)) break;
-            printf("%"PRId64"\n", vm->regs[src].i);
+            printf("%"PRId64"\n", nb_as_int(vm->regs[src]));
             break;
         }
         
         case OP_PRINT_F: {
             uint8_t src;
             if (!vm_read_byte(vm, &src)) break;
-            printf("%g\n", vm->regs[src].f);
+            printf("%g\n", nb_as_double(vm->regs[src]));
             break;
         }
 
@@ -283,14 +302,14 @@ void vm_execute_step(Vm *vm) {
             uint64_t raw;
             int64_t val;
             if (!vm_read_8byte(vm, &raw)) break;
-            memcpy(&val, &raw, sizeof val);
+            memcpy(&val, &raw, sizeof(val));
             if (val < 0 || val % GM_STACK_ALIGN != 0) {
                 LOG_ERROR("Argument of enter instruction "
                           "must be >= 0 and divisible by 8");
                 vm->status = VM_FAULT_BAD_FRAME;
                 break;
             }
-            if (vm->regs[RSP].u < vm->stack_base + (uint64_t)val + GM_STACK_ALIGN) {
+            if (vm->regs[RSP] < vm->stack_base + (uint64_t)val + GM_STACK_ALIGN) {
                 LOG_ERROR("Argument of enter instruction "
                           "must be less than space left on the stack");
                 vm->status = VM_FAULT_STACK_OVERFLOW;
@@ -299,16 +318,17 @@ void vm_execute_step(Vm *vm) {
             if (!stack_push(vm, vm->regs[RBP])) break;
 
             vm->regs[RBP] = vm->regs[RSP];
-            vm->regs[RSP].u -= (uint64_t)val;
+            vm->regs[RSP] -= (uint64_t)val;
+            memset(&vm->mem[vm->regs[RSP]], 0, (size_t)val);
             break;
         }
         
         case OP_LEAVE: {
-            uint64_t bp = vm->regs[RBP].u;
-            if (bp < vm->regs[RSP].u) {
+            uint64_t bp = vm->regs[RBP];
+            if (bp < vm->regs[RSP]) {
                 LOG_ERROR("Base pointer is further than stack pointer:"
                           " bp=%" PRIu64 ", rsp=%" PRIu64,
-                          bp, vm->regs[RSP].u);
+                          bp, vm->regs[RSP]);
                 vm->status = VM_FAULT_BAD_FRAME;
                 break;
             }
@@ -325,7 +345,7 @@ void vm_execute_step(Vm *vm) {
                 vm->status = VM_FAULT_BAD_FRAME;
                 break;
             }
-            vm->regs[RSP].u = bp;
+            vm->regs[RSP] = bp;
             stack_pop(vm, &vm->regs[RBP]);
             break;
         }
@@ -334,7 +354,7 @@ void vm_execute_step(Vm *vm) {
             uint64_t raw;
             int64_t off;
             if (!vm_read_8byte(vm, &raw)) break;
-            memcpy(&off, &raw, sizeof off);
+            memcpy(&off, &raw, sizeof(off));
             vm_call(vm, off);
             break;
         }
@@ -342,13 +362,13 @@ void vm_execute_step(Vm *vm) {
         case OP_RET: {
             Word addr;
             if (!stack_pop(vm, &addr)) break;
-            if (addr.u >= vm->code_len) {
+            if (addr >= vm->code_len) {
                 LOG_ERROR("RET out of boundaries: target=%" PRIu64
-                        ", code_len=%zu", addr.u, vm->code_len);
+                        ", code_len=%zu", addr, vm->code_len);
                 vm->status = VM_FAULT_BAD_IP;
                 break;
             }
-            vm->ip = (size_t)addr.u;
+            vm->ip = (size_t)addr;
             break;
         }
         case OP_PUSH: {
@@ -368,13 +388,13 @@ void vm_execute_step(Vm *vm) {
             uint64_t raw;
             int64_t off;
             if (!vm_read_byte(vm, &dst) || !vm_read_byte(vm, &base) || !vm_read_8byte(vm, &raw)) break;
-            memcpy(&off, &raw, sizeof off);
+            memcpy(&off, &raw, sizeof(off));
             uint64_t addr;
-            if (!stack_addr(vm, vm->regs[base].u, off, &addr)) {
+            if (!stack_addr(vm, vm->regs[base], off, &addr)) {
                 vm->status = VM_FAULT_BAD_ADDR;
                 break;
             }
-            vm->regs[dst].u = mem_read_u64(vm, addr);
+            vm->regs[dst] = mem_read_u64(vm, addr);
             break;
         }
         case OP_STORE: {
@@ -382,13 +402,13 @@ void vm_execute_step(Vm *vm) {
             uint64_t raw;
             int64_t off;
             if (!vm_read_byte(vm, &base) || !vm_read_8byte(vm, &raw) || !vm_read_byte(vm, &src)) break;
-            memcpy(&off, &raw, sizeof off);
+            memcpy(&off, &raw, sizeof(off));
             uint64_t addr;
-            if (!stack_addr(vm, vm->regs[base].u, off, &addr)) {
+            if (!stack_addr(vm, vm->regs[base], off, &addr)) {
                 vm->status = VM_FAULT_BAD_ADDR;
                 break;
             }
-            mem_write_u64(vm, addr, vm->regs[src].u);
+            mem_write_u64(vm, addr, vm->regs[src]);
             break;
         }
         default:
