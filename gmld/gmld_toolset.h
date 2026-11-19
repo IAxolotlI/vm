@@ -56,12 +56,14 @@ typedef struct
 
 uint8_t*gmld_update_abi(const uint8_t*file, size_t*reslength); //for testing
 
-GmSection* gmld_parse_sections(const uint8_t* file);
+bool gmld_check_format(const uint8_t*file, size_t buflen); //check if it's a valid gm2 file
+
+GmSection* gmld_parse_sections(const uint8_t* file, size_t*seccount);
 GmSymbol* gmld_parse_symtab(const GmSection*symtab);
 GmRelocation* gmld_parse_reloctab(const GmSection*reloctab);
 
-GmFile gmld_parse_full(const uint8_t* file);
-uint8_t* gmld_collect_file(const GmFile* source);
+bool gmld_parse_full(const uint8_t* file, GmFile*result);
+uint8_t* gmld_collect_file(const GmFile* source, size_t*ressize);
 
 bool gmld_add_section(GmFile* target, const GmSection*section); //file gets modified
 bool gmld_mark_symbol(GmSection* symtab, const GmSymbol*symbol);

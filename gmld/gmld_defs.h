@@ -6,6 +6,8 @@
 #include <string.h>
 #include "gm.h"
 
+#define GM_ABI_VERSION_OVERRIDE 2
+
 
 //low level structures as stored in the file
 
