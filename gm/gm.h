@@ -19,21 +19,29 @@ typedef enum {
     VM_FAULT_BAD_FRAME,
     VM_FAULT_BAD_ADDR,
     VM_FAULT_NULL_REF,
+    VM_FAULT_TYPE,
     VM_FAULT_OOM,
 } VmStatus;
 
 typedef struct {
-    Word           regs[REG_COUNT];
-    const uint8_t  *code;
-    size_t         code_len;
+    Word          regs[REG_COUNT];
+    const uint8_t *code;
+    size_t        code_len;
 
-    uint8_t        *mem;
-    size_t         mem_size;
-    size_t         stack_base;
-    size_t         stack_top;
+    uint8_t       *mem;
+    size_t        mem_size;
+
+    size_t        stack_base;
+    size_t        stack_top;
+
+    size_t        heap_from_start;
+    size_t        heap_from_end;
+    size_t        heap_to_start;
+    size_t        heap_to_end;
+    size_t        heap_alloc_offset;
     
-    size_t         ip;
-    VmStatus       status;
+    size_t        ip;
+    VmStatus      status;
 } Vm;
 
 const char *vm_get_status(VmStatus s);

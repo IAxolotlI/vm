@@ -1,0 +1,26 @@
+load_i    r0, 0
+load_i    r1, 1
+load_i    r2, 5
+new_array r3, 5
+
+fill_loop:
+    mul_i    r4, r0, r0
+    arr_set  r3, r0, r4
+    add_i    r0, r0, r1
+    cmp_lt_i r5, r0, r2
+    jnz      r5, fill_loop
+
+gc_collect
+
+load_i    r0, 0
+load_i    r6, 0
+
+sum_loop:
+    arr_get  r4, r3, r0
+    add_i    r6, r6, r4
+    add_i    r0, r0, r1
+    cmp_lt_i r5, r0, r2
+    jnz      r5, sum_loop
+
+print_i r6
+halt

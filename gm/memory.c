@@ -3,13 +3,13 @@
 #include "abi.h"
 #include "memory.h"
 
-void mem_write_u64(Vm *vm, uint64_t addr, uint64_t value) {
+void stack_write_u64(Vm *vm, uint64_t addr, uint64_t value) {
     for (size_t i = 0; i < 8; i++) {
         vm->mem[addr + i] = (uint8_t)(value >> (8 * i));
     }
 }
 
-uint64_t mem_read_u64(Vm *vm, uint64_t addr) {
+uint64_t stack_read_u64(Vm *vm, uint64_t addr) {
     uint64_t value = 0;
     for (size_t i = 0; i < 8; i++) {
         value |= (uint64_t)vm->mem[addr + i] << (8 * i);
@@ -34,7 +34,7 @@ bool stack_push(Vm *vm, Word v) {
         return false;
     }
     sp -= GM_STACK_ALIGN;
-    mem_write_u64(vm, sp, v);
+    stack_write_u64(vm, sp, v);
     vm->regs[RSP] = sp;
     return true;
 }
@@ -55,7 +55,7 @@ bool stack_pop(Vm *vm, Word *out) {
         vm->status = VM_FAULT_STACK_UNDERFLOW;
         return false;
     }
-    *out = mem_read_u64(vm, sp);
+    *out = stack_read_u64(vm, sp);
     vm->regs[RSP] = sp + GM_STACK_ALIGN;
     return true;
 }

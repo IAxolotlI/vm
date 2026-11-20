@@ -1,0 +1,23 @@
+load_i    r0, 0
+load_i    r1, 1
+load_i    r2, 2
+
+new_bytes r3, 3
+
+load_i    r4, 71
+byte_set  r3, r0, r4
+load_i    r4, 77
+byte_set  r3, r1, r4
+load_i    r4, 33
+byte_set  r3, r2, r4
+
+gc_collect
+
+byte_get  r5, r3, r0
+byte_get  r6, r3, r1
+add_i     r5, r5, r6
+byte_get  r6, r3, r2
+add_i     r5, r5, r6
+
+print_i   r5
+halt

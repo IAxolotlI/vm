@@ -9,6 +9,7 @@
 #include "opcodes.h"
 #include "memory.h"
 #include "nanbox.h"
+#include "heap.h"
 
 static const int64_t INT48_MIN = -(1LL << 47);
 
@@ -57,29 +58,32 @@ const char *vm_get_status(VmStatus s) {
         case VM_FAULT_BAD_ADDR:        return "Bad memory address";
         case VM_FAULT_NULL_REF:        return "Null dereference";
         case VM_FAULT_OOM:             return "Out of memory";
+        case VM_FAULT_TYPE:            return "Type check failed";
         default:                       return "Unknown";
     }
 }
 
-static int64_t add_i64(int64_t a, int64_t b) {
-    uint64_t r = (uint64_t)a + (uint64_t)b;
+static int64_t arith_op_i64(Opcode op, int64_t a, int64_t b) {
+    uint64_t r = 0;
+    switch (op) {
+        case OP_ADD_I: r = (uint64_t)a + (uint64_t)b; break;
+        case OP_SUB_I: r = (uint64_t)a - (uint64_t)b; break;
+        case OP_MUL_I: r = (uint64_t)a * (uint64_t)b; break;
+        default:       return 0;
+    }
     int64_t out;
     memcpy(&out, &r, sizeof(out));
     return out;
 }
 
-static int64_t sub_i64(int64_t a, int64_t b) {
-    uint64_t r = (uint64_t)a - (uint64_t)b;
-    int64_t out;
-    memcpy(&out, &r, sizeof(out));
-    return out;
-}
-
-static int64_t mul_i64(int64_t a, int64_t b) {
-    uint64_t r = (uint64_t)a * (uint64_t)b;
-    int64_t out;
-    memcpy(&out, &r, sizeof(out));
-    return out;
+static double arith_op_double(Opcode op, double a, double b) {
+    switch (op) {
+        case OP_ADD_F: return a + b;
+        case OP_SUB_F: return a - b;
+        case OP_MUL_F: return a * b;
+        case OP_DIV_F: return a / b;
+        default:       return 0;
+    }
 }
 
 static bool vm_relative_target(const Vm *vm, int64_t off, size_t *out) {
@@ -171,65 +175,19 @@ void vm_execute_step(Vm *vm) {
             break;
         }
 
-        case OP_ADD_I: {
-            uint8_t dst, a, b;
-            if (!vm_read_byte(vm, &dst) || !vm_read_byte(vm, &a) || !vm_read_byte(vm, &b)) break;
-            int64_t x = nb_as_int(vm->regs[a]);
-            int64_t y = nb_as_int(vm->regs[b]);
-            vm->regs[dst] = nb_box_int(add_i64(x, y));
-            break;
-        }
-
-        case OP_ADD_F: {
-            uint8_t dst, a, b;
-            if (!vm_read_byte(vm, &dst) || !vm_read_byte(vm, &a) || !vm_read_byte(vm, &b)) break;
-            double x = nb_as_double(vm->regs[a]);
-            double y = nb_as_double(vm->regs[b]);
-            vm->regs[dst] = nb_box_double(x + y);
-            break;
-        }
-        
-        case OP_SUB_I: {
-            uint8_t dst, a, b;
-            if (!vm_read_byte(vm, &dst) || !vm_read_byte(vm, &a) || !vm_read_byte(vm, &b)) break;
-            int64_t x = nb_as_int(vm->regs[a]);
-            int64_t y = nb_as_int(vm->regs[b]);
-            vm->regs[dst] = nb_box_int(sub_i64(x, y));
-            break;
-        }
-        
-        case OP_SUB_F: {
-            uint8_t dst, a, b;
-            if (!vm_read_byte(vm, &dst) || !vm_read_byte(vm, &a) || !vm_read_byte(vm, &b)) break;
-            double x = nb_as_double(vm->regs[a]);
-            double y = nb_as_double(vm->regs[b]);
-            vm->regs[dst] = nb_box_double(x - y);
-            break;
-        }
-                
+        case OP_ADD_I:
+        case OP_SUB_I:
         case OP_MUL_I: {
             uint8_t dst, a, b;
             if (!vm_read_byte(vm, &dst) || !vm_read_byte(vm, &a) || !vm_read_byte(vm, &b)) break;
-            int64_t x = nb_as_int(vm->regs[a]);
-            int64_t y = nb_as_int(vm->regs[b]);
-            vm->regs[dst] = nb_box_int(mul_i64(x, y));
+            int64_t x = nb_as_int(vm->regs[a]); int64_t y = nb_as_int(vm->regs[b]);
+            vm->regs[dst] = nb_box_int(arith_op_i64(opcode, x, y));
             break;
         }
-        
-        case OP_MUL_F: {
-            uint8_t dst, a, b;
-            if (!vm_read_byte(vm, &dst) || !vm_read_byte(vm, &a) || !vm_read_byte(vm, &b)) break;
-            double x = nb_as_double(vm->regs[a]);
-            double y = nb_as_double(vm->regs[b]);
-            vm->regs[dst] = nb_box_double(x * y);
-            break;
-        }
-        
         case OP_DIV_I: {
             uint8_t dst, a, b;
             if (!vm_read_byte(vm, &dst) || !vm_read_byte(vm, &a) || !vm_read_byte(vm, &b)) break;
-            int64_t x = nb_as_int(vm->regs[a]);
-            int64_t y = nb_as_int(vm->regs[b]);
+            int64_t x = nb_as_int(vm->regs[a]); int64_t y = nb_as_int(vm->regs[b]);
             if (y == 0) { vm->status = VM_FAULT_DIV_ZERO; break; }
             if (x == INT48_MIN && y == -1) {
                 vm->regs[dst] = nb_box_int(INT48_MIN);
@@ -239,12 +197,15 @@ void vm_execute_step(Vm *vm) {
             break;
         }
 
+        case OP_ADD_F:
+        case OP_SUB_F:
+        case OP_MUL_F:
         case OP_DIV_F: {
             uint8_t dst, a, b;
             if (!vm_read_byte(vm, &dst) || !vm_read_byte(vm, &a) || !vm_read_byte(vm, &b)) break;
             double x = nb_as_double(vm->regs[a]);
             double y = nb_as_double(vm->regs[b]);
-            vm->regs[dst] = nb_box_double(x / y);
+            vm->regs[dst] = nb_box_double(arith_op_double(opcode, x, y));
             break;
         }
         
@@ -316,7 +277,6 @@ void vm_execute_step(Vm *vm) {
                 break;
             }
             if (!stack_push(vm, vm->regs[RBP])) break;
-
             vm->regs[RBP] = vm->regs[RSP];
             vm->regs[RSP] -= (uint64_t)val;
             memset(&vm->mem[vm->regs[RSP]], 0, (size_t)val);
@@ -394,7 +354,7 @@ void vm_execute_step(Vm *vm) {
                 vm->status = VM_FAULT_BAD_ADDR;
                 break;
             }
-            vm->regs[dst] = mem_read_u64(vm, addr);
+            vm->regs[dst] = stack_read_u64(vm, addr);
             break;
         }
         case OP_STORE: {
@@ -408,12 +368,174 @@ void vm_execute_step(Vm *vm) {
                 vm->status = VM_FAULT_BAD_ADDR;
                 break;
             }
-            mem_write_u64(vm, addr, vm->regs[src]);
+            stack_write_u64(vm, addr, vm->regs[src]);
+            break;
+        }        
+        case OP_NEW_ARRAY: {
+            uint8_t  dst;
+            uint64_t imm;
+            if (!vm_read_byte(vm, &dst) || !vm_read_8byte(vm, &imm)) break;
+            int64_t len;
+            memcpy(&len, &imm, sizeof(len));
+            if (len < 0) break;
+
+            size_t payload_size = (size_t)len * sizeof(Word);
+            uint64_t offset = heap_alloc(vm, OBJ_ARRAY, payload_size);
+            if (offset == GM_NULL) break;
+            Word *elements = (Word*)(vm->mem + offset + sizeof(ObjHeader));
+            Word null_val = nb_box_null();
+            for (int64_t i = 0; i < len; i++) {
+                elements[i] = null_val;
+            }
+            vm->regs[dst] = nb_box_obj(offset);
             break;
         }
-        default:
+        case OP_NEW_BYTES: {
+            uint8_t  dst;
+            uint64_t imm;
+            if (!vm_read_byte(vm, &dst) || !vm_read_8byte(vm, &imm)) break;
+            int64_t len;
+            memcpy(&len, &imm, sizeof(len));
+            if (len < 0) break;
+        
+            uint64_t offset = heap_alloc(vm, OBJ_BYTES, (size_t)len);
+            if (offset == GM_NULL) break;
+            uint8_t *data = vm->mem + offset + sizeof(ObjHeader);
+            if (len > 0) {
+                memset(data, 0, (size_t)len);
+            }
+        
+            vm->regs[dst] = nb_box_obj(offset);
+            break;
+        }
+        
+        case OP_BYTE_GET: {
+            uint8_t dst, buf, idx;
+            if (!vm_read_byte(vm, &dst) || !vm_read_byte(vm, &buf) || !vm_read_byte(vm, &idx)) break;
+            if (!nb_is_obj(vm->regs[buf]) || !nb_is_int(vm->regs[idx])) {
+                vm->status = VM_FAULT_TYPE;
+                break;
+            }
+            uint64_t offset = nb_as_obj(vm->regs[buf]);
+            ObjHeader *hdr = (ObjHeader*)(vm->mem + offset);
+            int64_t index = nb_as_int(vm->regs[idx]);
+            if (hdr->type != OBJ_BYTES) {
+                vm->status = VM_FAULT_TYPE;
+                break;
+            }
+            if (index < 0 || index >= hdr->size) {
+                vm->status = VM_FAULT_OOB;
+                break;
+            }
+        
+            uint8_t *data = vm->mem + offset + sizeof(ObjHeader);
+            vm->regs[dst] = nb_box_int(data[index]);
+            break;
+        }
+
+        case OP_BYTE_SET: {
+            uint8_t buf, idx, val;
+            if (!vm_read_byte(vm, &buf) || !vm_read_byte(vm, &idx) || !vm_read_byte(vm, &val)) break;
+            if (!nb_is_obj(vm->regs[buf]) || !nb_is_int(vm->regs[idx]) || !nb_is_int(vm->regs[val])) {
+                vm->status = VM_FAULT_TYPE;
+                break;
+            }
+
+            uint64_t offset = nb_as_obj(vm->regs[buf]);
+            ObjHeader *hdr = (ObjHeader*)(vm->mem + offset);
+            int64_t index = nb_as_int(vm->regs[idx]);
+            if (hdr->type != OBJ_BYTES) {
+                vm->status = VM_FAULT_TYPE;
+                break;
+            }
+            if (index < 0 || index >= hdr->size) {
+                vm->status = VM_FAULT_OOB;
+                break;
+            }
+        
+            uint8_t *data = vm->mem + offset + sizeof(ObjHeader);
+            data[idx] = (uint8_t)(nb_as_int(vm->regs[val]) & 0xFF);
+            break;
+        }
+        
+        case OP_ARR_GET: {
+            uint8_t dst, arr, idx; 
+            if (!vm_read_byte(vm, &dst) || !vm_read_byte(vm, &arr) || !vm_read_byte(vm, &idx)) break;
+            if (!nb_is_obj(vm->regs[arr]) || !nb_is_int(vm->regs[idx])) {
+                vm->status = VM_FAULT_TYPE;
+                break;
+            }
+            uint64_t offset = nb_as_obj(vm->regs[arr]);
+            ObjHeader *hdr = (ObjHeader*)(vm->mem + offset);
+            int64_t index = nb_as_int(vm->regs[idx]);
+            if (hdr->type != OBJ_ARRAY) {
+                vm->status = VM_FAULT_TYPE;
+                break;
+            }
+            if (index < 0 || (size_t)index >= hdr->size / sizeof(Word)) {
+                vm->status = VM_FAULT_OOB;
+                break;
+            }
+        
+            Word *elements = (Word*)(vm->mem + offset + sizeof(ObjHeader));
+            vm->regs[dst] = elements[index];
+            break;
+        }
+
+       case OP_ARR_SET: {
+           uint8_t arr, idx, val;
+           if (!vm_read_byte(vm, &arr) || !vm_read_byte(vm, &idx) || !vm_read_byte(vm, &val)) break;
+           if (!nb_is_obj(vm->regs[arr]) || !nb_is_int(vm->regs[idx])) {
+               vm->status = VM_FAULT_TYPE;
+               break;
+           }
+           uint64_t offset = nb_as_obj(vm->regs[arr]);
+           ObjHeader *hdr = (ObjHeader *)(vm->mem + offset);
+           int64_t index = nb_as_int(vm->regs[idx]);
+           if (hdr->type != OBJ_ARRAY) {
+               vm->status = VM_FAULT_TYPE;
+               break;
+           }
+           if (index < 0 || (size_t)index >= hdr->size / sizeof(Word)) {
+               vm->status = VM_FAULT_OOB;
+               break;
+           }
+       
+           Word *elements = (Word *)(vm->mem + offset + sizeof(ObjHeader));
+           elements[index] = vm->regs[val];
+           break;
+       }
+
+       case OP_ARR_LEN: {
+           uint8_t dst, arr;
+           if (!vm_read_byte(vm, &dst) || !vm_read_byte(vm, &arr)) break;
+           if (!nb_is_obj(vm->regs[arr])) {
+               vm->status = VM_FAULT_TYPE;
+               break;
+           }
+       
+           uint64_t offset = nb_as_obj(vm->regs[arr]);
+           ObjHeader *hdr = (ObjHeader*)(vm->mem + offset);
+       
+           if (hdr->type != OBJ_ARRAY) {
+               vm->status = VM_FAULT_TYPE;
+               break;
+           }
+       
+           size_t len = hdr->size / sizeof(Word);
+           vm->regs[dst] = nb_box_int((int64_t)len);
+           break;
+       }
+
+        case OP_GC_COLLECT: {
+            gc_collect(vm);
+            break;
+        }
+
+        default: {
             LOG_ERROR("Unknown opcode 0x%02X at IP %zu", opcode, vm->ip - 1);
             vm->status = VM_FAULT_BAD_OP;
             break;
+        }
     }
 }

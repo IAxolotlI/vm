@@ -1,0 +1,23 @@
+load_i    r0, 0
+load_i    r1, 1
+
+new_array r2, 2
+new_array r3, 2
+
+load_i    r4, 100
+arr_set   r3, r0, r4
+
+arr_set   r2, r0, r3
+arr_set   r2, r1, r3
+
+load_i    r3, 0
+gc_collect
+
+arr_get   r5, r2, r0
+load_i    r4, 555
+arr_set   r5, r0, r4
+
+arr_get   r6, r2, r1
+arr_get   r7, r6, r0
+print_i   r7
+halt

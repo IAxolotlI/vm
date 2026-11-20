@@ -8,6 +8,10 @@
 
 bool vm_init(Vm *vm, size_t mem_size, size_t stack_size) {
     if (!vm) return false;
+    if (mem_size > UINT32_MAX) {
+        LOG_ERROR("Memory size must not exceed %u bytes", UINT32_MAX);
+        return false;
+    }
     if (stack_size < GM_STACK_MIN) {
         LOG_ERROR("Stack size must be greater than %d bytes", GM_STACK_MIN);
         return false;
@@ -34,10 +38,16 @@ bool vm_init(Vm *vm, size_t mem_size, size_t stack_size) {
     vm->mem_size   = mem_size;
     vm->stack_top  = mem_size;
     vm->stack_base = mem_size - stack_size;
+
     vm->regs[RSP] = vm->stack_top;
     vm->regs[RBP] = vm->stack_top;
     vm->ip = 0;
     vm->status = VM_RUNNING;
+    
+    vm->heap_from_start = 0;
+    vm->heap_to_end = vm->stack_base;
+    vm->heap_to_start = (vm->heap_to_end - vm->heap_from_start) / 2;
+    vm->heap_from_end = vm->heap_to_start;
     return true;
 }
 
